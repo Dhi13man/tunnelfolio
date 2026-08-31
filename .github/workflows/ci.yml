@@ -54,6 +54,9 @@ jobs:
 
   secrets:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -116,7 +119,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install VPN test tools
-        run: sudo apt-get update && sudo apt-get install --yes openvpn wireguard-tools openresolv openssl
+        run: sudo apt-get update && sudo apt-get install --yes openvpn wireguard-tools openssl
       - name: Test real backends in an isolated network namespace
         run: sudo --preserve-env=GITHUB_WORKSPACE tests/network-namespace.sh
 

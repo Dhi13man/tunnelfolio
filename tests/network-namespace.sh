@@ -60,6 +60,7 @@ install -d -m 0700 \
 	"$fixture/state" \
 	"$netns_config"
 printf 'nameserver 192.0.2.53\n' > "$netns_config/resolv.conf"
+printf 'nameserver 192.0.2.53\n' > "$fixture/initial-resolv.conf"
 chmod 0600 "$netns_config/resolv.conf"
 proxy_token=tunnelfolio-test-proxy-token-value
 printf '%s\n' "$proxy_token" > "$fixture/proxy-token"
@@ -70,10 +71,11 @@ cat > "$fixture/profiles/wireguard/generic/wgtest.conf" <<EOF
 [Interface]
 PrivateKey = $private_key
 Address = 192.0.2.1/32
-DNS = 203.0.113.53
 Table = off
 PostUp = ip route add 198.51.100.1/32 dev %i table 12345
+PostUp = printf 'nameserver 203.0.113.53\n' > /etc/resolv.conf
 PreDown = ip route del 198.51.100.1/32 dev %i table 12345
+PreDown = cat $fixture/initial-resolv.conf > /etc/resolv.conf
 
 [Peer]
 PublicKey = $(printf '%s' "$private_key" | wg pubkey)
@@ -136,8 +138,6 @@ chmod 0600 "$fixture/profiles/wireguard/generic/"*.conf "$fixture/profiles/openv
 (cd "$source_root" && go build -trimpath -o "$binary" .)
 ip netns add "$namespace"
 ip netns exec "$namespace" ip link set lo up
-ip netns exec "$namespace" resolvconf -u
-ip netns exec "$namespace" cat /etc/resolv.conf > "$fixture/initial-resolv.conf"
 ip netns exec "$namespace" openvpn --config "$fixture/openvpn-server.conf" \
 	>"$fixture/openvpn-server.log" 2>&1 &
 openvpn_server_pid=$!
@@ -160,6 +160,16 @@ request() {
 		set -- "$@" --data "$body"
 	fi
 	ip netns exec "$namespace" curl "$@" "http://127.0.0.1:50001$path"
+}
+
+assert_resolver_restored() {
+	if ! cmp "$fixture/initial-resolv.conf" "$netns_config/resolv.conf"; then
+		echo "expected resolver:" >&2
+		cat "$fixture/initial-resolv.conf" >&2
+		echo "actual resolver:" >&2
+		cat "$netns_config/resolv.conf" >&2
+		return 1
+	fi
 }
 
 start_manager() {
@@ -203,7 +213,7 @@ start_manager
 request GET /api/status > "$fixture/status-wg-restarted.json"
 grep -F 'wireguard/generic/wgtest' "$fixture/status-wg-restarted.json"
 request POST /api/disconnect '{}' > "$fixture/disconnect-after-wg-restart.json"
-cmp "$fixture/initial-resolv.conf" "$netns_config/resolv.conf"
+assert_resolver_restored
 request POST /api/connect '{"profile":"wireguard/generic/wgtest"}' > "$fixture/reconnect-wg.json"
 
 request POST /api/connect '{"profile":"openvpn/generic/null"}' > "$fixture/connect-openvpn.json"
@@ -211,7 +221,7 @@ if ip netns exec "$namespace" ip link show wgtest >/dev/null 2>&1; then
 	echo "WireGuard interface survived a cross-backend switch" >&2
 	exit 1
 fi
-cmp "$fixture/initial-resolv.conf" "$netns_config/resolv.conf"
+assert_resolver_restored
 request GET /api/status > "$fixture/status-openvpn.json"
 grep -F 'openvpn/generic/null' "$fixture/status-openvpn.json"
 ip netns exec "$namespace" ip link show tunclient >/dev/null
@@ -238,7 +248,7 @@ if request POST /api/connect '{"profile":"wireguard/generic/broken"}' > "$fixtur
 fi
 request GET /api/status > "$fixture/status-restored.json"
 grep -F 'openvpn/generic/null' "$fixture/status-restored.json"
-cmp "$fixture/initial-resolv.conf" "$netns_config/resolv.conf"
+assert_resolver_restored
 
 request POST /api/connect '{"profile":"wireguard/generic/wgtest"}' > "$fixture/cross-back.json"
 ip netns exec "$namespace" ip link show wgtest >/dev/null
@@ -251,5 +261,5 @@ request GET /api/status > "$fixture/status-disconnected.json"
 grep -F '"lifecycle":"disconnected"' "$fixture/status-disconnected.json"
 test -z "$(ip netns exec "$namespace" wg show interfaces)"
 test -z "$(ip netns exec "$namespace" ip route show table 12345 198.51.100.1/32)"
-cmp "$fixture/initial-resolv.conf" "$netns_config/resolv.conf"
+assert_resolver_restored
 test -z "$(wg show interfaces | tr ' ' '\n' | grep -Fx wgtest || true)"
