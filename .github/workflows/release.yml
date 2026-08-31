@@ -96,7 +96,7 @@ jobs:
           tar --sort=name --owner=0 --group=0 --numeric-owner \
             --mtime="@$source_date_epoch" -C dist -czf "dist/$archive.tar.gz" "$archive"
       - name: Generate archive SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           file: dist/tunnelfolio_${{ github.ref_name }}_linux_${{ matrix.label }}.tar.gz
           format: spdx-json
