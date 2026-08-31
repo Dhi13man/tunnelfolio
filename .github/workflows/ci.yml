@@ -108,7 +108,7 @@ jobs:
           CHROMIUM_PATH: /usr/bin/google-chrome
         run: |
           sudo --preserve-env=CHROMIUM_PATH "$(command -v node)" tests/ui-server-browser.cjs
-          node tests/ui-browser.cjs
+          sudo --preserve-env=CHROMIUM_PATH "$(command -v node)" tests/ui-browser.cjs
 
   network-namespace:
     runs-on: ubuntu-latest
