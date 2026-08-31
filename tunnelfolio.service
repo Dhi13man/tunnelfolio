@@ -1,0 +1,42 @@
+[Unit]
+Description=Tunnelfolio VPN profile manager
+Documentation=https://github.com/Dhi13man/tunnelfolio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/bin/tunnelfolio --listen 127.0.0.1:50001 --profiles-dir /etc/tunnelfolio/profiles --state-dir /var/lib/tunnelfolio --trusted-proxy --proxy-token-file /etc/tunnelfolio/proxy-token
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+KillMode=control-group
+RuntimeDirectory=tunnelfolio
+RuntimeDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectSystem=strict
+ReadOnlyPaths=/etc/tunnelfolio
+ReadWritePaths=/var/lib/tunnelfolio /run/tunnelfolio -/etc/resolv.conf -/run/systemd/resolve/stub-resolv.conf
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
