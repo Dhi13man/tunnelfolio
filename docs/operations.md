@@ -16,6 +16,8 @@ sudo journalctl -u tunnelfolio --since '-15 minutes' --no-pager
 
 Expected service output is `active`. Query `/healthz` through the configured HTTPS reverse proxy; a healthy response contains `"live":true` and reports each backend independently. Do not expose the loopback listener or print the proxy token.
 
+WireGuard profiles with `DNS` directives use the host resolver integration selected by `wg-quick`. The shipped unit permits the narrow runtime paths used by both `openresolv` (`/run/resolvconf`) and systemd-resolved while keeping the rest of the system read-only. It retains `CAP_KILL` because resolver update hooks may need to signal the host resolver after a DNS change.
+
 If the service is inactive, inspect its logs before restarting it. If a backend is unavailable, verify the corresponding profile directory and command installation. If status reports `error_conflict`, use the authenticated **Disconnect** action once; it enumerates and removes every Tunnelfolio-managed profile and keeps the conflict latched unless absence is proved.
 
 ## Back up an installation

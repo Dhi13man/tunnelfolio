@@ -13,6 +13,7 @@ mkdir -p "$stage"
 DESTDIR=$stage ./install.sh install
 test -x "$stage/usr/local/bin/tunnelfolio"
 test -f "$stage/etc/systemd/system/tunnelfolio.service"
+test -f "$stage/usr/lib/tmpfiles.d/tunnelfolio.conf"
 for directory in \
 	"$stage/etc/tunnelfolio" \
 	"$stage/etc/tunnelfolio/profiles" \
@@ -24,6 +25,11 @@ done
 test "$(stat -c %a "$stage/etc/tunnelfolio/proxy-token")" = 600
 test "$(stat -c %a "$stage/usr/local/bin/tunnelfolio")" = 755
 test "$(stat -c %a "$stage/etc/systemd/system/tunnelfolio.service")" = 644
+test "$(stat -c %a "$stage/usr/lib/tmpfiles.d/tunnelfolio.conf")" = 644
+grep -Fqx 'd /run/resolvconf 0755 root root -' "$stage/usr/lib/tmpfiles.d/tunnelfolio.conf"
+grep -Fqx 'ReadWritePaths=/var/lib/tunnelfolio /run/tunnelfolio -/etc/resolv.conf /run/resolvconf -/run/systemd/resolve/stub-resolv.conf' "$stage/etc/systemd/system/tunnelfolio.service"
+grep -Fqx 'CapabilityBoundingSet=CAP_KILL CAP_NET_ADMIN CAP_NET_RAW' "$stage/etc/systemd/system/tunnelfolio.service"
+grep -Fqx 'AmbientCapabilities=CAP_KILL CAP_NET_ADMIN CAP_NET_RAW' "$stage/etc/systemd/system/tunnelfolio.service"
 test "$(wc -c < "$stage/etc/tunnelfolio/proxy-token")" -eq 64
 grep -Eq '^[0-9a-f]{64}$' "$stage/etc/tunnelfolio/proxy-token"
 
@@ -53,6 +59,7 @@ systemd-analyze verify --root="$unit_root" tunnelfolio.service
 DESTDIR=$stage ./install.sh uninstall
 test ! -e "$stage/usr/local/bin/tunnelfolio"
 test ! -e "$stage/etc/systemd/system/tunnelfolio.service"
+test ! -e "$stage/usr/lib/tmpfiles.d/tunnelfolio.conf"
 test "$(sha256sum "$stage/etc/tunnelfolio/proxy-token")" = "$token_digest"
 test "$(sha256sum "$stage/etc/tunnelfolio/profiles/wireguard/generic/sentinel.conf")" = "$profile_digest"
 test "$(sha256sum "$stage/var/lib/tunnelfolio/state.json")" = "$state_digest"
@@ -92,13 +99,22 @@ cat > "$fake_bin/wg" <<'EOF'
 #!/bin/sh
 test "$*" = 'show interfaces'
 EOF
-chmod 755 "$fake_bin/systemctl" "$fake_bin/wg"
-SYSTEMCTL_LOG=$live/systemctl.log PATH="$fake_bin:$PATH" \
+cat > "$fake_bin/systemd-tmpfiles" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$TMPFILES_LOG"
+test "$1" = --create
+test -f "$2"
+EOF
+chmod 755 "$fake_bin/systemctl" "$fake_bin/systemd-tmpfiles" "$fake_bin/wg"
+SYSTEMCTL_LOG=$live/systemctl.log TMPFILES_LOG=$live/tmpfiles.log PATH="$fake_bin:$PATH" \
 	PREFIX=$live/usr/local \
 	SYSCONFDIR=$live/etc/tunnelfolio \
 	STATEDIR=$live/var/lib/tunnelfolio \
 	UNITDIR=$live/etc/systemd/system \
+	TMPFILESDIR=$live/usr/lib/tmpfiles.d \
 	./install.sh install
+grep -Fx -- "--create $live/usr/lib/tmpfiles.d/tunnelfolio.conf" "$live/tmpfiles.log"
+test -f "$live/usr/lib/tmpfiles.d/tunnelfolio.conf"
 grep -Fx 'daemon-reload' "$live/systemctl.log"
 grep -Fx 'enable tunnelfolio.service' "$live/systemctl.log"
 grep -Fx 'restart tunnelfolio.service' "$live/systemctl.log"
@@ -107,8 +123,10 @@ SYSTEMCTL_LOG=$live/systemctl.log PATH="$fake_bin:$PATH" \
 	SYSCONFDIR=$live/etc/tunnelfolio \
 	STATEDIR=$live/var/lib/tunnelfolio \
 	UNITDIR=$live/etc/systemd/system \
+	TMPFILESDIR=$live/usr/lib/tmpfiles.d \
 	./install.sh uninstall
 grep -Fx 'disable tunnelfolio.service' "$live/systemctl.log"
+test ! -e "$live/usr/lib/tmpfiles.d/tunnelfolio.conf"
 
 printf 'active\n' > "$live/etc/tunnelfolio/profiles/wireguard/generic/active.conf"
 cat > "$fake_bin/wg" <<'EOF'
