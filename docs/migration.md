@@ -55,6 +55,8 @@ Route a temporary authenticated HTTPS proxy location to this port with the same 
 6. Reboot the host and repeat health, cleanup, and connectivity checks.
 7. Exercise the rollback once, then repeat the forward cutover from the same verified artifacts.
 
+During the soak, compare the authenticated `/api/status` profile with the observed runtime resource. Exactly one matching OpenVPN process group or WireGuard interface is expected while connected. Do not require an empty WireGuard interface set until after authenticated disconnect and service stop, and do not trigger immediate rollback from one transient remote health sample.
+
 Keep the legacy files and backups until the replacement has completed the operator-selected soak and at least one later verified release or 30 days have passed, whichever is later.
 
 ## Roll back

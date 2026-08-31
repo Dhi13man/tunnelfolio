@@ -20,6 +20,12 @@ WireGuard profiles with `DNS` directives use the host resolver integration selec
 
 If the service is inactive, inspect its logs before restarting it. If a backend is unavailable, verify the corresponding profile directory and command installation. If status reports `error_conflict`, use the authenticated **Disconnect** action once; it enumerates and removes every Tunnelfolio-managed profile and keeps the conflict latched unless absence is proved.
 
+## Monitor a rollout
+
+Monitor both `/healthz` and the authenticated `/api/status` response through the production proxy. A connected profile is healthy when status reports `connected` and the observed OpenVPN process group or WireGuard interface matches that exact catalog profile. In particular, an active catalog-owned WireGuard interface is expected while its profile is connected; never use an empty `wg show interfaces` result as a health requirement during a connection soak.
+
+Reserve `sudo ./install.sh check-disconnected` for the documented rollback or uninstall sequence, after an authenticated disconnect and service stop. Record periodic samples and retry transient proxy, DNS, or reachability failures before changing service state. A single failed remote sample must not trigger an immediate rollback; evaluate the recorded samples at the soak gate while keeping an independently tested host-local rollback path available for sustained loss of service or network access.
+
 ## Back up an installation
 
 Create a root-only destination on a filesystem appropriate for your host, then copy these paths without displaying their contents:
@@ -100,6 +106,7 @@ The uninstall action removes only the binary and unit. It preserves profiles, pr
 | Service will not start | `journalctl -u tunnelfolio -b` | Correct ownership or mode failures; do not broaden private file permissions |
 | Backend unavailable | `/healthz` backend reason | Install its command tools or restore its protocol profile directory, then restart |
 | `error_conflict` | `/api/status` through the proxy | Use authenticated disconnect; investigate if absence cannot be proved |
+| Connected profile treated as failed by a rollout monitor | Monitor's status/interface comparison | Accept the one runtime resource matching `/api/status`; require absence only after disconnect and stop |
 | OpenVPN profile rejected | Service log and [security policy](../SECURITY.md) | Remove unsupported supervision directives or fix confined referenced files |
 | Proxy authentication rejected | Reverse-proxy logs and header configuration | Restore the same-host HTTPS proxy contract; never expose the loopback listener |
 

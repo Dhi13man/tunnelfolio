@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Document rollout monitoring that accepts the active profile's matching
+  runtime resource and does not roll back on one transient remote sample.
+
 ## [0.1.0] - 2026-08-30
 
 ### Added
