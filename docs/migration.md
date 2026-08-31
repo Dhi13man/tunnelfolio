@@ -57,6 +57,8 @@ Route a temporary authenticated HTTPS proxy location to this port with the same 
 
 During the soak, compare the authenticated `/api/status` profile with the observed runtime resource. Exactly one matching OpenVPN process group or WireGuard interface is expected while connected. Do not require an empty WireGuard interface set until after authenticated disconnect and service stop, and do not trigger immediate rollback from one transient remote health sample.
 
+For PID-based OpenVPN census, first fail the sample if Tunnelfolio is inactive, its systemd `MainPID` is invalid, or the manager's `/proc/<pid>/ns/net` cannot be read. Compare each candidate with that network namespace, ignore processes in other namespaces, and fail the sample closed if a live candidate's namespace cannot be read.
+
 Keep the legacy files and backups until the replacement has completed the operator-selected soak and at least one later verified release or 30 days have passed, whichever is later.
 
 ## Roll back
