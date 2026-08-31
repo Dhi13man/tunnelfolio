@@ -7,6 +7,8 @@ project; upgrade promptly after a security release.
 
 ## Reporting a vulnerability
 
+Security response is owned by [@Dhi13man](https://github.com/Dhi13man).
+
 Use GitHub's private vulnerability reporting for this repository. Do not open a
 public issue and do not include VPN profiles, private keys, credentials,
 hostnames, or public IP addresses.
