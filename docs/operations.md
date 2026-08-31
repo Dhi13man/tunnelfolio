@@ -24,6 +24,8 @@ If the service is inactive, inspect its logs before restarting it. If a backend 
 
 Monitor both `/healthz` and the authenticated `/api/status` response through the production proxy. A connected profile is healthy when status reports `connected` and the observed OpenVPN process group or WireGuard interface matches that exact catalog profile. In particular, an active catalog-owned WireGuard interface is expected while its profile is connected; never use an empty `wg show interfaces` result as a health requirement during a connection soak.
 
+For PID-based OpenVPN census, first fail the sample if Tunnelfolio is inactive, its systemd `MainPID` is invalid, or the manager's `/proc/<pid>/ns/net` cannot be read. Compare each candidate with that network namespace, ignore processes in other namespaces, and fail the sample closed if a live candidate's namespace cannot be read.
+
 Reserve `sudo ./install.sh check-disconnected` for the documented rollback or uninstall sequence, after an authenticated disconnect and service stop. Record periodic samples and retry transient proxy, DNS, or reachability failures before changing service state. A single failed remote sample must not trigger an immediate rollback; evaluate the recorded samples at the soak gate while keeping an independently tested host-local rollback path available for sustained loss of service or network access.
 
 ## Back up an installation
