@@ -264,7 +264,7 @@ func openNoFollow(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.NewFile(uintptr(fd), path), nil
+	return os.NewFile(uintptr(fd), "private-file"), nil
 }
 
 func validatePrivateRegularFile(path string) error {
@@ -306,17 +306,22 @@ func validatePrivateFileDescriptor(file *os.File) error {
 }
 
 func validatePrivateDirectory(path string) error {
-	info, err := os.Lstat(path)
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+	defer syscall.Close(fd)
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fd, &stat); err != nil {
+		return err
+	}
+	if stat.Mode&syscall.S_IFMT != syscall.S_IFDIR {
 		return errors.New("must be a real directory")
 	}
-	if info.Mode().Perm() != 0o700 {
-		return fmt.Errorf("permissions must be 0700, got %04o", info.Mode().Perm())
+	if stat.Mode&0o777 != 0o700 {
+		return fmt.Errorf("permissions must be 0700, got %04o", stat.Mode&0o777)
 	}
-	if os.Geteuid() == 0 && ownerUID(info) != 0 {
+	if os.Geteuid() == 0 && stat.Uid != 0 {
 		return errors.New("must be owned by root")
 	}
 	return nil

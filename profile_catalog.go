@@ -81,9 +81,10 @@ func (c *ProfileCatalog) Profiles(backend string) ([]CatalogProfile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("validate %s profile directory: %w", backend, err)
 	}
-	defer syscall.Close(backendFD)
+	backendDirectory := os.NewFile(uintptr(backendFD), "backend-profile-directory")
+	defer backendDirectory.Close()
 
-	providers, err := os.ReadDir(backendPath)
+	providers, err := backendDirectory.ReadDir(-1)
 	if err != nil {
 		return nil, fmt.Errorf("list %s providers: %w", backend, err)
 	}
@@ -99,9 +100,10 @@ func (c *ProfileCatalog) Profiles(backend string) ([]CatalogProfile, error) {
 		if err != nil {
 			return nil, fmt.Errorf("validate provider %q: %w", provider, err)
 		}
+		providerDirectory := os.NewFile(uintptr(providerFD), "provider-profile-directory")
 
-		providerProfiles, listErr := c.profilesInProvider(backend, provider, providerPath, providerFD)
-		_ = syscall.Close(providerFD)
+		providerProfiles, listErr := c.profilesInProvider(backend, provider, providerPath, providerDirectory)
+		_ = providerDirectory.Close()
 		if listErr != nil {
 			return nil, listErr
 		}
@@ -135,8 +137,8 @@ func (c *ProfileCatalog) Resolve(id string) (CatalogProfile, error) {
 	return CatalogProfile{}, ErrProfileNotFound
 }
 
-func (c *ProfileCatalog) profilesInProvider(backend, provider, providerPath string, providerFD int) ([]CatalogProfile, error) {
-	entries, err := os.ReadDir(providerPath)
+func (c *ProfileCatalog) profilesInProvider(backend, provider, providerPath string, providerDirectory *os.File) ([]CatalogProfile, error) {
+	entries, err := providerDirectory.ReadDir(-1)
 	if err != nil {
 		return nil, fmt.Errorf("list provider %q: %w", provider, err)
 	}
@@ -146,7 +148,7 @@ func (c *ProfileCatalog) profilesInProvider(backend, provider, providerPath stri
 		if !accepted {
 			continue
 		}
-		if err := validateSecureFileAt(providerFD, entry.Name(), c.requiredUID); err != nil {
+		if err := validateSecureFileAt(int(providerDirectory.Fd()), entry.Name(), c.requiredUID); err != nil {
 			return nil, fmt.Errorf("validate profile %s/%s/%s: %w", backend, provider, identifier, err)
 		}
 		profile := CatalogProfile{
