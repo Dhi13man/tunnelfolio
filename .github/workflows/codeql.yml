@@ -27,5 +27,6 @@ jobs:
           upload: ${{ github.event.repository.private && 'never' || 'always' }}
       - name: Fail on CodeQL findings
         run: |
+          jq -r '.runs[].results[]? | [.ruleId, .message.text, .locations[0].physicalLocation.artifactLocation.uri, .locations[0].physicalLocation.region.startLine] | @tsv' ../codeql-results/*.sarif
           count=$(jq -s '[.[].runs[].results // [] | length] | add // 0' ../codeql-results/*.sarif)
           test "$count" -eq 0
