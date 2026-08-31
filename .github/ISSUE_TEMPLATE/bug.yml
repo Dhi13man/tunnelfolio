@@ -1,0 +1,34 @@
+name: Bug report
+description: Report reproducible incorrect behavior without private host data.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never include VPN profiles, keys, credentials, hostnames, or public IP addresses.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Linux distribution, architecture, systemd version, and relevant OpenVPN or WireGuard tools version.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Exact redacted steps, expected result, and actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted evidence
+      description: Relevant logs with all private and identifying values removed.

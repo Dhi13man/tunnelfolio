@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>Tunnelfolio — VPN profile manager</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="app-header">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">T</span><div><span class="brand-name">Tunnelfolio</span><span class="brand-detail">VPN profile manager</span></div></div>
+    <button class="icon-button" id="settings-open" type="button" aria-label="Open settings"><span aria-hidden="true">•••</span></button>
+  </header>
+  <main class="shell" id="main-content" tabindex="-1">
+    <section class="connection" id="connection" aria-labelledby="connection-title" aria-busy="true">
+      <div class="connection-orb" aria-hidden="true"></div>
+      <div class="connection-copy"><p class="eyebrow">Connection</p><h1 id="connection-title" tabindex="-1">Checking status…</h1><p class="connection-detail" id="connection-detail">Contacting the VPN manager</p><dl class="connection-meta" id="connection-meta" hidden></dl></div>
+      <div class="connection-actions" id="connection-actions"></div>
+    </section>
+    <section class="error-panel" id="error-panel" aria-labelledby="error-title" hidden>
+      <div><h2 id="error-title">Something went wrong</h2><p id="error-message"></p></div>
+      <button class="button button-secondary" id="error-dismiss" type="button">Dismiss</button>
+    </section>
+    <section class="profiles" aria-labelledby="profiles-title">
+      <div class="section-heading"><div><p class="eyebrow">Library</p><h2 id="profiles-title">VPN profiles</h2></div><p class="result-count" id="result-count" aria-live="polite"></p></div>
+      <form class="profile-tools" id="profile-tools" role="search">
+        <div class="search-field"><label class="sr-only" for="profile-search">Search VPN profiles</label><span aria-hidden="true">⌕</span><input id="profile-search" type="search" placeholder="Search name, provider, backend…" autocomplete="off"></div>
+        <div><label class="filter-label" for="backend-filter">Backend</label><select id="backend-filter"><option value="all">All backends</option></select></div>
+      </form>
+      <section class="quick-section" id="recent-section" aria-labelledby="recent-title" hidden><h3 id="recent-title">Recent</h3><div class="quick-list" id="recent-list"></div></section>
+      <div class="profile-list" id="profile-list" aria-busy="true"><div class="loading-card" aria-hidden="true"></div><div class="loading-card" aria-hidden="true"></div><div class="loading-card" aria-hidden="true"></div></div>
+      <div class="empty-state" id="empty-state" hidden><h3>No matching profiles</h3><p>Try another search or backend filter.</p></div>
+    </section>
+  </main>
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <div class="dialog-header"><div><p class="eyebrow">Preferences</p><h2 id="settings-title" tabindex="-1">Settings</h2></div><button class="icon-button" id="settings-close" type="button" aria-label="Close settings"><span aria-hidden="true">×</span></button></div>
+    <div class="dialog-body">
+      <section aria-labelledby="favorites-settings-title"><div class="setting-row"><div><h3 id="favorites-settings-title">Favorites</h3><p id="favorites-summary">No saved favorites</p></div><button class="button button-secondary" id="favorites-clear" type="button">Clear</button></div></section>
+      <section aria-labelledby="recents-settings-title"><div class="setting-row"><div><h3 id="recents-settings-title">Recent profiles</h3><p id="recents-summary">No recent profiles</p></div><button class="button button-secondary" id="recents-clear" type="button">Clear</button></div></section>
+      <section aria-labelledby="capabilities-title"><h3 id="capabilities-title">Available capabilities</h3><ul class="capability-list" id="capability-list"></ul></section>
+    </div>
+  </dialog>
+  <div class="sr-only" id="status-announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

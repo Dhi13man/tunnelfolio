@@ -1,0 +1,229 @@
+name: Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.authorize.outputs.commit }}
+      tag_object: ${{ steps.authorize.outputs.tag_object }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Authorize release tag and commit
+        id: authorize
+        env:
+          EVENT_COMMIT: ${{ github.event.after }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Dhi13man/tunnelfolio
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          tag_object="$(git rev-parse "refs/tags/$GITHUB_REF_NAME")"
+          test "$(git cat-file -t "$tag_object")" = tag
+          test "$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" | cut -f1)" = "$tag_object"
+          tag_commit="$(git rev-parse "$tag_object^{}")"
+          test "$tag_commit" = "$EVENT_COMMIT"
+          test "$tag_commit" = "$GITHUB_SHA"
+          git fetch origin main --depth=1
+          test "$tag_commit" = "$(git rev-parse origin/main)"
+          version=${GITHUB_REF_NAME#v}
+          test "$(grep -Ec "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md)" -eq 1
+          for workflow in ci.yml codeql.yml; do
+            conclusion="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$tag_commit&branch=main&status=completed&per_page=10" --jq '.workflow_runs | map(select(.event == "push")) | first | .conclusion')"
+            test "$conclusion" = success
+          done
+          printf 'commit=%s\n' "$tag_commit" >> "$GITHUB_OUTPUT"
+          printf 'tag_object=%s\n' "$tag_object" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: authorize
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            label: amd64
+          - goarch: arm64
+            label: arm64
+          - goarch: arm
+            goarm: "7"
+            label: armv7
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.authorize.outputs.commit }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Build archive
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          LABEL: ${{ matrix.label }}
+          RELEASE_COMMIT: ${{ needs.authorize.outputs.commit }}
+        run: |
+          set -euo pipefail
+          archive="tunnelfolio_${GITHUB_REF_NAME}_linux_${LABEL}"
+          version="${GITHUB_REF_NAME#v}"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          source_date_epoch="$(git show -s --format=%ct "$RELEASE_COMMIT")"
+          build_date="$(date -u -d "@$source_date_epoch" +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p "dist/$archive"
+          go build -trimpath \
+            -ldflags="-s -w -X main.version=$version -X main.commit=$RELEASE_COMMIT -X main.date=$build_date" \
+            -o "dist/$archive/tunnelfolio" .
+          cp LICENSE README.md install.sh tunnelfolio.service "dist/$archive/"
+          ./scripts/check-licenses.sh >/dev/null
+          GOTOOLCHAIN=go1.27.0 go run github.com/google/go-licenses/v2@v2.0.1 save ./... \
+            --save_path "dist/$archive/THIRD_PARTY_LICENSES"
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@$source_date_epoch" -C dist -czf "dist/$archive.tar.gz" "$archive"
+      - name: Generate archive SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          file: dist/tunnelfolio_${{ github.ref_name }}_linux_${{ matrix.label }}.tar.gz
+          format: spdx-json
+          output-file: dist/tunnelfolio_${{ github.ref_name }}_linux_${{ matrix.label }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Remove unpacked archive
+        env:
+          LABEL: ${{ matrix.label }}
+        run: |
+          archive="tunnelfolio_${GITHUB_REF_NAME}_linux_${LABEL}"
+          rm -rf "dist/$archive"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tunnelfolio-${{ matrix.label }}
+          path: |
+            dist/*.tar.gz
+            dist/*.spdx.json
+          if-no-files-found: error
+
+  publish:
+    needs: [authorize, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.authorize.outputs.commit }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        run: cd dist && sha256sum *.tar.gz > SHA256SUMS
+      - name: Verify release archives
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64 armv7; do
+            archive="tunnelfolio_${GITHUB_REF_NAME}_linux_${arch}.tar.gz"
+            test -f "dist/$archive"
+            root="${archive%.tar.gz}"
+            test -f "dist/${root}.spdx.json"
+            mapfile -t top_level < <(tar -tzf "dist/$archive" | awk -F/ 'NF <= 2 || (NF == 3 && $2 == "THIRD_PARTY_LICENSES" && $3 == "") { print }' | sort)
+            expected=("$root/" "$root/LICENSE" "$root/README.md" "$root/THIRD_PARTY_LICENSES/" "$root/install.sh" "$root/tunnelfolio" "$root/tunnelfolio.service")
+            test "${top_level[*]}" = "${expected[*]}"
+            test -z "$(tar -tzf "dist/$archive" | grep -E '(^|/)\.\.(/|$)|^/' || true)"
+            test "$(tar -tzf "dist/$archive" | grep -c "/THIRD_PARTY_LICENSES/.*/LICENSE$")" -ge 10
+            inspect="$(mktemp -d)"
+            tar -xzf "dist/$archive" -C "$inspect"
+            while IFS='|' read -r member kind mode; do
+              case "$member" in
+                "$root"|"$root/THIRD_PARTY_LICENSES"|"$root/THIRD_PARTY_LICENSES/"*)
+                  if [[ "$kind" == f ]]; then
+                    [[ "${member##*/}" == LICENSE || "${member##*/}" == NOTICE ]]
+                    [[ "$mode" =~ ^(444|644)$ ]]
+                  else
+                    test "$kind" = d
+                    test "$mode" = 755
+                  fi
+                  ;;
+                "$root/LICENSE"|"$root/README.md"|"$root/tunnelfolio.service")
+                  test "$kind" = f
+                  test "$mode" = 644
+                  ;;
+                "$root/install.sh"|"$root/tunnelfolio")
+                  test "$kind" = f
+                  test "$mode" = 755
+                  ;;
+                *) false ;;
+              esac
+            done < <(find "$inspect" -printf '%P|%y|%m\n' | tail -n +2 | sort)
+            find "$inspect" -depth -delete
+          done
+          test "$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 3
+          test "$(find dist -maxdepth 1 -type f -name '*.spdx.json' | wc -l)" -eq 3
+          cd dist
+          sha256sum -c SHA256SUMS
+      - name: Attest archives
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Attest amd64 SBOM
+        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        with:
+          subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_amd64.tar.gz
+          sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_amd64.spdx.json
+      - name: Attest arm64 SBOM
+        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        with:
+          subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_arm64.tar.gz
+          sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_arm64.spdx.json
+      - name: Attest armv7 SBOM
+        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        with:
+          subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_armv7.tar.gz
+          sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_armv7.spdx.json
+      - name: Publish GitHub release
+        env:
+          AUTHORIZED_COMMIT: ${{ needs.authorize.outputs.commit }}
+          AUTHORIZED_TAG_OBJECT: ${{ needs.authorize.outputs.tag_object }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_COMMIT"
+          git fetch origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" --force
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME")" = "$AUTHORIZED_TAG_OBJECT"
+          test "$(git rev-parse "$AUTHORIZED_TAG_OBJECT^{}")" = "$AUTHORIZED_COMMIT"
+          version="${GITHUB_REF_NAME#v}"
+          awk -v version="$version" '
+            index($0, "## [" version "] - ") == 1 && $0 ~ / - [0-9]{4}-[0-9]{2}-[0-9]{2}$/ { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          test -s /tmp/release-notes.md
+          mapfile -t assets < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
+          expected=(
+            SHA256SUMS
+            "tunnelfolio_${GITHUB_REF_NAME}_linux_amd64.spdx.json"
+            "tunnelfolio_${GITHUB_REF_NAME}_linux_amd64.tar.gz"
+            "tunnelfolio_${GITHUB_REF_NAME}_linux_arm64.spdx.json"
+            "tunnelfolio_${GITHUB_REF_NAME}_linux_arm64.tar.gz"
+            "tunnelfolio_${GITHUB_REF_NAME}_linux_armv7.spdx.json"
+            "tunnelfolio_${GITHUB_REF_NAME}_linux_armv7.tar.gz"
+          )
+          test "${assets[*]}" = "${expected[*]}"
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --notes-file /tmp/release-notes.md --title "$GITHUB_REF_NAME"

@@ -1,0 +1,11 @@
+/tunnelfolio
+/dist/
+/node_modules/
+/coverage.out
+*.conf
+*.key
+*.pem
+*.log
+tunnelfolio-state.json
+tunnelfolio-preferences.json
+.env
