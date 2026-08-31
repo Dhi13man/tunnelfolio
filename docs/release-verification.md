@@ -35,7 +35,7 @@ List files before extracting:
 tar -tzf tunnelfolio_v0.1.0_linux_arm64.tar.gz
 ```
 
-The archive contains one top-level directory with `tunnelfolio`, `tunnelfolio.service`, `install.sh`, `README.md`, `LICENSE`, and `THIRD_PARTY_LICENSES`. Reject absolute paths, `..` traversal components, unexpected executables, or additional top-level content.
+The archive contains one top-level directory with `tunnelfolio`, `tunnelfolio.service`, `tunnelfolio.tmpfiles.conf`, `install.sh`, `README.md`, `LICENSE`, and `THIRD_PARTY_LICENSES`. Reject absolute paths, `..` traversal components, unexpected executables, or additional top-level content.
 
 Extract into an empty directory and verify build identity:
 

@@ -5,6 +5,7 @@ prefix=${PREFIX:-/usr/local}
 sysconfdir=${SYSCONFDIR:-/etc/tunnelfolio}
 statedir=${STATEDIR:-/var/lib/tunnelfolio}
 unitdir=${UNITDIR:-/etc/systemd/system}
+tmpfilesdir=${TMPFILESDIR:-/usr/lib/tmpfiles.d}
 destdir=${DESTDIR:-}
 
 usage() {
@@ -99,6 +100,7 @@ install)
 	}
 	install -d -m 0755 "$destdir$prefix/bin"
 	install -d -m 0755 "$destdir$unitdir"
+	install -d -m 0755 "$destdir$tmpfilesdir"
 	install -d -m 0700 \
 		"$destdir$sysconfdir" \
 		"$destdir$sysconfdir/profiles" \
@@ -113,7 +115,9 @@ install)
 	fi
 	install -m 0755 ./tunnelfolio "$destdir$prefix/bin/tunnelfolio"
 	install -m 0644 ./tunnelfolio.service "$destdir$unitdir/tunnelfolio.service"
+	install -m 0644 ./tunnelfolio.tmpfiles.conf "$destdir$tmpfilesdir/tunnelfolio.conf"
 	if [ -z "$destdir" ]; then
+		systemd-tmpfiles --create "$tmpfilesdir/tunnelfolio.conf"
 		systemctl daemon-reload
 		systemctl enable tunnelfolio.service
 		systemctl restart tunnelfolio.service
@@ -127,7 +131,10 @@ uninstall)
 		check_disconnected
 		systemctl disable tunnelfolio.service
 	fi
-	rm -f "$destdir$prefix/bin/tunnelfolio" "$destdir$unitdir/tunnelfolio.service"
+	rm -f \
+		"$destdir$prefix/bin/tunnelfolio" \
+		"$destdir$unitdir/tunnelfolio.service" \
+		"$destdir$tmpfilesdir/tunnelfolio.conf"
 	if [ -z "$destdir" ]; then
 		systemctl daemon-reload
 	fi

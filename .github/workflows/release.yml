@@ -89,7 +89,7 @@ jobs:
           go build -trimpath \
             -ldflags="-s -w -X main.version=$version -X main.commit=$RELEASE_COMMIT -X main.date=$build_date" \
             -o "dist/$archive/tunnelfolio" .
-          cp LICENSE README.md install.sh tunnelfolio.service "dist/$archive/"
+          cp LICENSE README.md install.sh tunnelfolio.service tunnelfolio.tmpfiles.conf "dist/$archive/"
           ./scripts/check-licenses.sh >/dev/null
           GOTOOLCHAIN=go1.27.0 go run github.com/google/go-licenses/v2@v2.0.1 save ./... \
             --save_path "dist/$archive/THIRD_PARTY_LICENSES"
@@ -144,7 +144,7 @@ jobs:
             root="${archive%.tar.gz}"
             test -f "dist/${root}.spdx.json"
             mapfile -t top_level < <(tar -tzf "dist/$archive" | awk -F/ 'NF <= 2 || (NF == 3 && $2 == "THIRD_PARTY_LICENSES" && $3 == "") { print }' | sort)
-            expected=("$root/" "$root/LICENSE" "$root/README.md" "$root/THIRD_PARTY_LICENSES/" "$root/install.sh" "$root/tunnelfolio" "$root/tunnelfolio.service")
+            expected=("$root/" "$root/LICENSE" "$root/README.md" "$root/THIRD_PARTY_LICENSES/" "$root/install.sh" "$root/tunnelfolio" "$root/tunnelfolio.service" "$root/tunnelfolio.tmpfiles.conf")
             test "${top_level[*]}" = "${expected[*]}"
             test -z "$(tar -tzf "dist/$archive" | grep -E '(^|/)\.\.(/|$)|^/' || true)"
             test "$(tar -tzf "dist/$archive" | grep -c "/THIRD_PARTY_LICENSES/.*/LICENSE$")" -ge 10
@@ -161,7 +161,7 @@ jobs:
                     test "$mode" = 755
                   fi
                   ;;
-                "$root/LICENSE"|"$root/README.md"|"$root/tunnelfolio.service")
+                "$root/LICENSE"|"$root/README.md"|"$root/tunnelfolio.service"|"$root/tunnelfolio.tmpfiles.conf")
                   test "$kind" = f
                   test "$mode" = 644
                   ;;

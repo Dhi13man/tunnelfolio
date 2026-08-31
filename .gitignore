@@ -3,6 +3,7 @@
 /node_modules/
 /coverage.out
 *.conf
+!/tunnelfolio.tmpfiles.conf
 *.key
 *.pem
 *.log

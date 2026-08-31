@@ -29,6 +29,8 @@ jobs:
         run: go build -trimpath -o tunnelfolio .
       - name: Smoke-test installer
         run: tests/installer.sh
+      - name: Test tmpfiles lifecycle
+        run: sudo tests/tmpfiles.sh
 
   cross-build:
     runs-on: ubuntu-latest
