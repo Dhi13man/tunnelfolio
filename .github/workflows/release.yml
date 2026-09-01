@@ -183,17 +183,17 @@ jobs:
         with:
           subject-path: dist/*.tar.gz
       - name: Attest amd64 SBOM
-        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
           subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_amd64.tar.gz
           sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_amd64.spdx.json
       - name: Attest arm64 SBOM
-        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
           subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_arm64.tar.gz
           sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_arm64.spdx.json
       - name: Attest armv7 SBOM
-        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
           subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_armv7.tar.gz
           sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_armv7.spdx.json
