@@ -19,3 +19,6 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+      github-actions:
+        patterns:
+          - "*"
