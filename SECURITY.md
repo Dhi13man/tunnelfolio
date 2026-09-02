@@ -24,10 +24,15 @@ Its listener is restricted to loopback. Remote deployments must use an authentic
 HTTPS reverse proxy and prevent direct access to the application listener.
 Forwarded headers are trusted only because the proxy is trusted.
 
-OpenVPN and `wg-quick` profiles are root-equivalent trusted policy: they can
-reference credentials and execute hooks, scripts, or plugins. Tunnelfolio does
-not download or sandbox profiles. Administrators must review provenance and
-install the profile tree as root-owned `0700` directories and `0600` files.
+OpenVPN and `wg-quick` profiles are root-equivalent trusted network policy.
+Browser import accepts a strict, self-contained subset and rejects executable
+hooks, plugins, external references, interactive credentials, and `SaveConfig`.
+This validation is compatibility and policy enforcement, not a sandbox.
+Administrators must still review provenance before import.
+
+Accepted bytes are stored in a root-owned managed library under
+`/var/lib/tunnelfolio`; the manifest and content fingerprints are not exposed
+through the API. Do not edit managed profile objects directly.
 
 Mutable startup requires the authenticated proxy contract. Unauthenticated
 loopback mode is read-only because local processes are not an authentication
