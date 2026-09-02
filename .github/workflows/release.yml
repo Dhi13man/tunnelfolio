@@ -21,7 +21,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Authorize release tag and commit
@@ -64,7 +64,7 @@ jobs:
             goarm: "7"
             label: armv7
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.authorize.outputs.commit }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -109,7 +109,7 @@ jobs:
         run: |
           archive="tunnelfolio_${GITHUB_REF_NAME}_linux_${LABEL}"
           rm -rf "dist/$archive"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tunnelfolio-${{ matrix.label }}
           path: |
@@ -125,11 +125,11 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.authorize.outputs.commit }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
@@ -183,17 +183,17 @@ jobs:
         with:
           subject-path: dist/*.tar.gz
       - name: Attest amd64 SBOM
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_amd64.tar.gz
           sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_amd64.spdx.json
       - name: Attest arm64 SBOM
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_arm64.tar.gz
           sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_arm64.spdx.json
       - name: Attest armv7 SBOM
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-path: dist/tunnelfolio_${{ github.ref_name }}_linux_armv7.tar.gz
           sbom-path: dist/tunnelfolio_${{ github.ref_name }}_linux_armv7.spdx.json
