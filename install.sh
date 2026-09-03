@@ -144,6 +144,10 @@ check_managed_resources_absent() {
 		check_private_directory "$cutover_root" "Tunnelfolio cutover root"
 		for stage in "$cutover_root"/*; do
 			path_exists "$stage" || continue
+			if [ -f "$stage" ] && [ ! -L "$stage" ]; then
+				check_private_file "$stage" "Tunnelfolio cutover receipt"
+				continue
+			fi
 			check_private_directory "$stage" "Tunnelfolio cutover stage"
 			stage_name=${stage##*/}
 			case $stage_name in
