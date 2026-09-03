@@ -73,9 +73,11 @@ fake_bin=$test_root/fake-bin
 live=$test_root/live
 cutover=$live/var/lib/tunnelfolio-cutover
 mkdir -p "$fake_bin" "$live/etc/tunnelfolio" "$live/var/lib/tunnelfolio/library/wireguard/tf_aaaaaaaaaaaaaaaaaaaaaaaaaa" "$cutover"
+printf 'cutover receipt\n' > "$cutover/pre-cutover.receipt"
 chmod 700 "$live/var/lib/tunnelfolio" "$live/var/lib/tunnelfolio/library" \
 	"$live/var/lib/tunnelfolio/library/wireguard" \
 	"$live/var/lib/tunnelfolio/library/wireguard/tf_aaaaaaaaaaaaaaaaaaaaaaaaaa" "$cutover"
+chmod 600 "$cutover/pre-cutover.receipt"
 cat > "$fake_bin/systemctl" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
@@ -316,6 +318,21 @@ if grep -Eq '^(enable|start|restart) ' "$live/systemctl.log"; then
 	echo "install-stopped activated the service" >&2
 	exit 1
 fi
+
+chmod 644 "$cutover/pre-cutover.receipt"
+if SYSTEMCTL_LOG=$live/systemctl.log TMPFILES_LOG=$live/tmpfiles.log PATH="$fake_bin:$PATH" \
+	PREFIX=$live/usr/local \
+	SYSCONFDIR=$live/etc/tunnelfolio \
+	STATEDIR=$live/var/lib/tunnelfolio \
+	CUTOVER_ROOT=$cutover \
+	UNITDIR=$live/etc/systemd/system \
+	TMPFILESDIR=$live/usr/lib/tmpfiles.d \
+	./install.sh install-stopped >"$test_root/public-receipt.stdout" 2>"$test_root/public-receipt.stderr"; then
+	echo "install-stopped accepted a public cutover receipt" >&2
+	exit 1
+fi
+grep -F 'Tunnelfolio cutover receipt is not private' "$test_root/public-receipt.stderr"
+chmod 600 "$cutover/pre-cutover.receipt"
 
 placed_digest=$(sha256sum "$live/usr/local/bin/tunnelfolio")
 if SYSTEMCTL_MODE=active SYSTEMCTL_LOG=$live/systemctl.log PATH="$fake_bin:$PATH" \
