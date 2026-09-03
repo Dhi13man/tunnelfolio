@@ -461,7 +461,9 @@ async function waitImportOutcome(page) {
     await tabTo(page, '[data-detail-action="connect"]');
     assert.match(await page.locator('[data-detail-action="connect"]').textContent(), /Germany/);
     await page.keyboard.press("Enter");
-    await page.waitForFunction(() => document.activeElement?.id === "current-title");
+    await page.waitForFunction(() => document.activeElement?.id === "current-title"
+      && document.querySelector("#current-title")?.textContent.includes("Germany")
+      && document.querySelector("#current-state")?.textContent === "WireGuard interface active · handshake observed");
     assert.equal(preferences.recents[0], "tf_cccccccccccccccccccccccccc", "server recents did not record the successful connection");
     await page.locator('input[name="profile-view"][value="recent"]').check();
     assert.equal(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').count(), 1, "connected profile did not enter the Recent view");
@@ -625,6 +627,8 @@ async function waitImportOutcome(page) {
 
     await tabTo(page, '[data-detail-action="remove"]');
     await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelector("#confirm-dialog")?.open
+      && document.querySelector("#confirm-title")?.textContent.includes("Germany"));
     assert.match(await page.locator("#confirm-title").textContent(), /Germany/);
     await scan(page, "removal confirmation");
     await tabTo(page, "#confirm-cancel");
