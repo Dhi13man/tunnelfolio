@@ -17,3 +17,4 @@ awk -F, '
 	END { exit failed }
 ' .github/license-policy.txt "$report"
 LC_ALL=C sort "$report"
+node scripts/check-node-dependencies.cjs

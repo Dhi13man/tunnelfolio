@@ -9,6 +9,38 @@ permissions:
   contents: read
 
 jobs:
+  release-authorization:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Rehearse annotated tag authorization
+        env:
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          DRY_RELEASE_REF: v999.999.${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "Tunnelfolio release rehearsal"
+          git config user.email "release-ci@users.noreply.github.com"
+          git tag --annotate "$DRY_RELEASE_REF" "$CANDIDATE_COMMIT" --message "release authorization rehearsal"
+          tag_object=$(git rev-parse "refs/tags/$DRY_RELEASE_REF")
+          changelog=$(mktemp)
+          trap 'rm -f "$changelog"' EXIT
+          printf '# Changelog\n\n## [%s] - 2099-01-01\n' "${DRY_RELEASE_REF#v}" > "$changelog"
+          ./scripts/verify-release-tag.sh \
+            "$GITHUB_REPOSITORY" \
+            "$DRY_RELEASE_REF" \
+            "$tag_object" \
+            "$CANDIDATE_COMMIT" \
+            "$CANDIDATE_COMMIT" \
+            "$tag_object" \
+            "$changelog" > authorization-receipt
+          grep -Fqx "commit=$CANDIDATE_COMMIT" authorization-receipt
+          grep -Fqx "tag_object=$tag_object" authorization-receipt
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -26,7 +58,7 @@ jobs:
       - name: Check vulnerabilities
         run: GOTOOLCHAIN=go1.27.0 go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: Build
-        run: go build -trimpath -o tunnelfolio .
+        run: go build -trimpath -o tunnelfolio ./cmd/tunnelfolio
       - name: Smoke-test installer
         run: tests/installer.sh
       - name: Test tmpfiles lifecycle
@@ -43,16 +75,153 @@ jobs:
             goarm: "7"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Build Linux binary
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Build release archive
         env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-        run: go build -trimpath -o tunnelfolio .
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          LABEL: ${{ matrix.goarch == 'arm' && 'armv7' || matrix.goarch }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+          TARGET_GOARM: ${{ matrix.goarm }}
+        run: ./scripts/build-release-archive.sh v0.1.0 "$CANDIDATE_COMMIT" "$TARGET_GOARCH" "$LABEL" "$TARGET_GOARM"
+      - name: Generate archive SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          file: dist/tunnelfolio_v0.1.0_linux_${{ matrix.goarch == 'arm' && 'armv7' || matrix.goarch }}.tar.gz
+          format: spdx-json
+          output-file: dist/tunnelfolio_v0.1.0_linux_${{ matrix.goarch == 'arm' && 'armv7' || matrix.goarch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Bind SBOM to archive
+        env:
+          LABEL: ${{ matrix.goarch == 'arm' && 'armv7' || matrix.goarch }}
+        run: |
+          archive="dist/tunnelfolio_v0.1.0_linux_${LABEL}.tar.gz"
+          ./scripts/bind-release-sbom.sh "$archive" "${archive%.tar.gz}.spdx.json" "$LABEL"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnelfolio-${{ matrix.goarch == 'arm' && 'armv7' || matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.spdx.json
+          if-no-files-found: error
+
+  release-bundle:
+    needs: [release-authorization, cross-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Download amd64 release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tunnelfolio-amd64
+          path: dist
+      - name: Download arm64 release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tunnelfolio-arm64
+          path: dist
+      - name: Download armv7 release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tunnelfolio-armv7
+          path: dist
+      - name: Create checksums
+        run: cd dist && sha256sum -- *.spdx.json *.tar.gz | LC_ALL=C sort -k2 > SHA256SUMS
+      - name: Verify release bundle
+        env:
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: ./scripts/verify-release-bundle.sh v0.1.0 "$CANDIDATE_COMMIT" dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnelfolio-release-dry-run
+          path: dist/*
+          if-no-files-found: error
+      - name: Install cross-architecture runners
+        run: sudo apt-get update && sudo apt-get install --yes qemu-user-static
+      - name: Execute all release binaries
+        env:
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: ./scripts/execute-release-binaries.sh v0.1.0 "$CANDIDATE_COMMIT" dist
+      - name: Prove release checks reject poisoned metadata and archives
+        env:
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          cases=$(mktemp -d)
+          trap 'find "$cases" -depth -delete' EXIT
+
+          cp -a dist "$cases/duplicate-checksum"
+          first_line=$(head -n 1 "$cases/duplicate-checksum/SHA256SUMS")
+          printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+            "$first_line" "$first_line" "$first_line" "$first_line" "$first_line" "$first_line" \
+            > "$cases/duplicate-checksum/SHA256SUMS"
+          if ./scripts/verify-release-bundle.sh v0.1.0 "$CANDIDATE_COMMIT" "$cases/duplicate-checksum"; then
+            echo "duplicate checksum entries were accepted" >&2
+            exit 1
+          fi
+
+          cp -a dist "$cases/swapped-sbom"
+          first="$cases/swapped-sbom/tunnelfolio_v0.1.0_linux_amd64.spdx.json"
+          second="$cases/swapped-sbom/tunnelfolio_v0.1.0_linux_arm64.spdx.json"
+          temporary="$cases/swapped-sbom/sbom.swap"
+          mv "$first" "$temporary"
+          mv "$second" "$first"
+          mv "$temporary" "$second"
+          (cd "$cases/swapped-sbom" && sha256sum -- *.spdx.json *.tar.gz | LC_ALL=C sort -k2 > SHA256SUMS)
+          if ./scripts/verify-release-bundle.sh v0.1.0 "$CANDIDATE_COMMIT" "$cases/swapped-sbom"; then
+            echo "swapped SBOMs were accepted" >&2
+            exit 1
+          fi
+
+          cp -a dist "$cases/hard-link"
+          archive="$cases/hard-link/tunnelfolio_v0.1.0_linux_amd64.tar.gz"
+          python3 - "$archive" <<'PY'
+          import os
+          import sys
+          import tarfile
+
+          archive = sys.argv[1]
+          replacement = archive + ".replacement"
+          with tarfile.open(archive, "r:gz") as source, tarfile.open(replacement, "w:gz") as target:
+              for member in source.getmembers():
+                  target.addfile(member, source.extractfile(member) if member.isfile() else None)
+              link = tarfile.TarInfo(
+                  "tunnelfolio_v0.1.0_linux_amd64/THIRD_PARTY_LICENSES/poison/NOTICE"
+              )
+              link.type = tarfile.LNKTYPE
+              link.linkname = "tunnelfolio_v0.1.0_linux_amd64/tunnelfolio"
+              link.mode = 0o644
+              target.addfile(link)
+          os.replace(replacement, archive)
+          PY
+          ./scripts/bind-release-sbom.sh \
+            "$archive" \
+            "$cases/hard-link/tunnelfolio_v0.1.0_linux_amd64.spdx.json" \
+            amd64
+          (cd "$cases/hard-link" && sha256sum -- *.spdx.json *.tar.gz | LC_ALL=C sort -k2 > SHA256SUMS)
+          if ./scripts/verify-release-bundle.sh v0.1.0 "$CANDIDATE_COMMIT" "$cases/hard-link"; then
+            echo "hard-linked archive member was accepted" >&2
+            exit 1
+          fi
 
   secrets:
     runs-on: ubuntu-latest
@@ -94,6 +263,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -103,14 +276,142 @@ jobs:
           node-version: "24"
       - name: Install pinned browser driver
         run: npm ci --ignore-scripts
+      - name: Audit browser development dependencies
+        run: npm audit --audit-level=high
+      - name: Install pinned Firefox
+        run: npx --no-install playwright-core install --with-deps firefox
+      - name: Install protocol observation tools
+        run: sudo apt-get install -y openvpn wireguard-tools
       - name: Build browser smoke-test server
-        run: go build -trimpath -o tunnelfolio .
+        run: go build -trimpath -o tunnelfolio ./cmd/tunnelfolio
       - name: Run browser behavior checks
         env:
           CHROMIUM_PATH: /usr/bin/google-chrome
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
+          mkdir -p test-artifacts/ui/chromium test-artifacts/ui/firefox
           sudo --preserve-env=CHROMIUM_PATH "$(command -v node)" tests/ui-server-browser.cjs
-          sudo --preserve-env=CHROMIUM_PATH "$(command -v node)" tests/ui-browser.cjs
+          sudo env CHROMIUM_PATH="$CHROMIUM_PATH" CANDIDATE_COMMIT="$CANDIDATE_COMMIT" UI_ARTIFACT_DIR="$GITHUB_WORKSPACE/test-artifacts/ui/chromium" BROWSER=chromium "$(command -v node)" tests/ui-browser.cjs
+          CANDIDATE_COMMIT="$CANDIDATE_COMMIT" UI_ARTIFACT_DIR="$GITHUB_WORKSPACE/test-artifacts/ui/firefox" BROWSER=firefox node tests/ui-browser.cjs
+      - name: Upload rendered-state atlas
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnelfolio-ui-state-atlas
+          path: test-artifacts/ui
+          if-no-files-found: error
+          retention-days: 14
+
+  android-software-keyboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_AVD_NAME: tunnelfolio-ci
+      ANDROID_SYSTEM_IMAGE: system-images;android-35;google_apis_playstore;x86_64
+      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install pinned browser driver
+        run: npm ci --ignore-scripts
+      - name: Create Android virtual device
+        run: |
+          set -euo pipefail
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/tunnelfolio-avd"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          mkdir -p test-artifacts/ui/android
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf '%s\n' \
+            "$ANDROID_HOME/platform-tools" \
+            "$ANDROID_HOME/emulator" \
+            "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          test -e /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "emulator" "$ANDROID_SYSTEM_IMAGE" \
+            2>&1 | tee test-artifacts/ui/android/sdk-install.log
+          mkdir -p "$HOME/.android"
+          chmod 0700 "$HOME/.android"
+          "$ANDROID_HOME/platform-tools/adb" keygen "$HOME/.android/adbkey"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name "$ANDROID_AVD_NAME" --package "$ANDROID_SYSTEM_IMAGE" --device pixel_2 <<< "no"
+          printf '%s\n' 'hw.keyboard=no' 'showDeviceFrame=no' >> "$ANDROID_AVD_HOME/$ANDROID_AVD_NAME.avd/config.ini"
+      - name: Run real Android software-keyboard check
+        env:
+          UI_ARTIFACT_DIR: ${{ github.workspace }}/test-artifacts/ui/android
+        run: |
+          set -euo pipefail
+          mkdir -p "$UI_ARTIFACT_DIR"
+          emulator "@$ANDROID_AVD_NAME" \
+            -accel on \
+            -gpu swiftshader \
+            -memory 2048 \
+            -no-audio \
+            -no-boot-anim \
+            -no-metrics \
+            -no-snapshot \
+            -no-window \
+            > "$UI_ARTIFACT_DIR/emulator.log" 2>&1 &
+          deadline=$((SECONDS + 300))
+          timeout 120 adb wait-for-device
+          until test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1; do
+            if ((SECONDS >= deadline)); then
+              echo "Android emulator did not finish booting" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          adb shell wm dismiss-keyguard
+          adb shell input keyevent 82
+          adb shell pm path com.android.chrome
+          adb shell pm grant com.android.chrome android.permission.POST_NOTIFICATIONS
+          adb shell am set-debug-app --persistent com.android.chrome
+          adb shell 'echo "chrome --disable-fre --no-default-browser-check --remote-debugging-port=9222" > /data/local/tmp/chrome-command-line'
+          node tests/ui-mobile-keyboard.cjs
+      - name: Stop Android emulator
+        if: always()
+        continue-on-error: true
+        run: |
+          "$ANDROID_HOME/platform-tools/adb" emu kill
+      - name: Upload Android software-keyboard evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnelfolio-android-software-keyboard
+          path: test-artifacts/ui/android
+          if-no-files-found: error
+          retention-days: 14
+
+  import-capacity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Exercise the production import envelope
+        env:
+          CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          mkdir -p test-artifacts
+          /usr/bin/time --verbose go test -tags=capacity -run '^TestImportCapacityEnvelope$' -count=1 -v ./internal/httpapi 2>&1 | tee test-artifacts/import-capacity.txt
+      - name: Upload capacity receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnelfolio-import-capacity
+          path: test-artifacts/import-capacity.txt
+          if-no-files-found: error
+          retention-days: 14
 
   network-namespace:
     runs-on: ubuntu-latest
@@ -121,7 +422,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install VPN test tools
-        run: sudo apt-get update && sudo apt-get install --yes openvpn wireguard-tools openssl
+        run: sudo apt-get update && sudo apt-get install --yes jq openvpn wireguard-tools openssl
       - name: Test real backends in an isolated network namespace
         run: sudo --preserve-env=GITHUB_WORKSPACE tests/network-namespace.sh
 
@@ -133,5 +434,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
       - name: Inventory transitive licenses
         run: ./scripts/check-licenses.sh

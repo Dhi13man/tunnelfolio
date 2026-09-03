@@ -1,12 +1,12 @@
 # Operating Tunnelfolio
 
-This runbook covers routine health checks, safe upgrades, diagnosis, and rollback for a systemd installation.
+Use this runbook to expose, monitor, upgrade, diagnose, roll back, or uninstall a systemd installation without losing control of the host's network path.
 
-**Last verified:** 2026-08-31
+**Last reviewed:** 2026-09-02. Bind these examples to a deployment receipt before calling that deployment verified.
 
-## Quick assessment
+## Assess the service
 
-Check the service, its authenticated health endpoint, and recent logs before changing state:
+Check systemd and recent logs before changing state:
 
 ```bash
 sudo systemctl is-active tunnelfolio
@@ -14,23 +14,102 @@ sudo systemctl status tunnelfolio --no-pager
 sudo journalctl -u tunnelfolio --since '-15 minutes' --no-pager
 ```
 
-Expected service output is `active`. Query `/healthz` through the configured HTTPS reverse proxy; a healthy response contains `"live":true` and reports each backend independently. Do not expose the loopback listener or print the proxy token.
+Expected service output is `active`. Query `/healthz` through the authenticated HTTPS proxy. A ready response contains `"live":true` and reports OpenVPN and WireGuard independently.
 
-WireGuard profiles with `DNS` directives use the host resolver integration selected by `wg-quick`. The shipped unit permits the narrow runtime paths used by both `openresolv` (`/run/resolvconf`) and systemd-resolved while keeping the rest of the system read-only. It retains `CAP_KILL` because resolver update hooks may need to signal the host resolver after a DNS change.
+Query `/api/status` through that proxy before connecting, switching, upgrading, or rolling back. The response distinguishes disconnected, transitional, active, failed, conflict, and unavailable-observation states. A WireGuard interface without a recent handshake is active but has no handshake evidence; do not report it as a proved working tunnel.
 
-If the service is inactive, inspect its logs before restarting it. If a backend is unavailable, verify the corresponding profile directory and command installation. If status reports `error_conflict`, use the authenticated **Disconnect** action once; it enumerates and removes every Tunnelfolio-managed profile and keeps the conflict latched unless absence is proved.
+## Expose Tunnelfolio through a private proxy
+
+Tunnelfolio listens on `127.0.0.1:50001`. Mutable endpoints also require four assertions from a trusted same-host HTTPS proxy:
+
+- `X-Forwarded-Proto: https`
+- the original host in `X-Forwarded-Host`
+- a non-empty authenticated identity in `X-Remote-User`
+- the private value from `/etc/tunnelfolio/proxy-token` in `X-Tunnelfolio-Proxy-Token`
+
+The proxy must discard caller-supplied copies before setting them. Keep its upstream listener on loopback, its token-bearing configuration root-only, and its request limit at or below 32 MiB.
+
+### Use nginx with Basic authentication
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name vpn.example.test;
+
+    auth_basic "Tunnelfolio";
+    auth_basic_user_file /etc/nginx/tunnelfolio.htpasswd;
+
+    client_max_body_size 32m;
+
+    location / {
+        proxy_pass http://127.0.0.1:50001;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Remote-User $remote_user;
+        proxy_set_header X-Tunnelfolio-Proxy-Token <PROXY_TOKEN>;
+    }
+}
+```
+
+Replace `<PROXY_TOKEN>` inside a root-only configuration, configure a valid certificate, and restrict ingress to a private network.
+
+### Use Tailscale Serve
+
+[Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) can terminate private tailnet HTTPS and forward to a same-host nginx listener. Tailnet access is not sufficient authentication for that loopback listener: another local process can reach it directly. Require independent Basic authentication there, and let nginx derive `X-Remote-User` only from the authenticated Basic username.
+
+Example nginx listener on `127.0.0.1:50002`:
+
+```nginx
+server {
+    listen 127.0.0.1:50002;
+
+    auth_basic "Tunnelfolio";
+    auth_basic_user_file /etc/nginx/tunnelfolio.htpasswd;
+
+    client_max_body_size 32m;
+
+    location / {
+        proxy_pass http://127.0.0.1:50001;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host <TAILNET_AUTHORITY>;
+        proxy_set_header X-Remote-User $remote_user;
+        proxy_set_header X-Tunnelfolio-Proxy-Token <PROXY_TOKEN>;
+    }
+}
+```
+
+Replace `<TAILNET_AUTHORITY>` with the exact browser authority, including the Serve port—for example, `<machine>.<tailnet>.ts.net:8443`. This fixed value prevents nginx from dropping the non-default port and constrains the origin accepted for mutations.
+
+Expose that listener to the tailnet:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:50002
+tailscale serve status
+```
+
+Confirm the status maps the tailnet-only `https://<machine>.<tailnet>.ts.net:8443/` listener to `http://127.0.0.1:50002`, then verify authenticated health:
+
+```bash
+curl --fail --user '<USER>:<PASSWORD>' \
+  'https://<machine>.<tailnet>.ts.net:8443/healthz'
+```
+
+Open that same HTTPS URL and authenticate with the nginx credentials. Record the sanitized URL, port, Serve mapping, authenticated health result, and candidate digest in the deployment receipt. Do not promote `Tailscale-User-Login` from an ordinary loopback request into the trusted user header. Tunnelfolio does not require Cloudflare, Tailscale, or any provider account; these are deployment choices outside the binary. Do not use Tailscale Funnel because it makes the service public.
 
 ## Monitor a rollout
 
-Monitor both `/healthz` and the authenticated `/api/status` response through the production proxy. A connected profile is healthy when status reports `connected` and the observed OpenVPN process group or WireGuard interface matches that exact catalog profile. In particular, an active catalog-owned WireGuard interface is expected while its profile is connected; never use an empty `wg show interfaces` result as a health requirement during a connection soak.
+Monitor both `/healthz` and authenticated `/api/status`. Record the binary digest, manifest digest, boot ID, service state, selected profile ID, observed runtime resource, resolver state, egress result, and proxy reachability.
 
-For PID-based OpenVPN census, first fail the sample if Tunnelfolio is inactive, its systemd `MainPID` is invalid, or the manager's `/proc/<pid>/ns/net` cannot be read. Compare each candidate with that network namespace, ignore processes in other namespaces, and fail the sample closed if a live candidate's namespace cannot be read.
+A connected sample passes only when the runtime resource matches the exact profile reported by `/api/status`:
 
-Reserve `sudo ./install.sh check-disconnected` for the documented rollback or uninstall sequence, after an authenticated disconnect and service stop. Record periodic samples and retry transient proxy, DNS, or reachability failures before changing service state. A single failed remote sample must not trigger an immediate rollback; evaluate the recorded samples at the soak gate while keeping an independently tested host-local rollback path available for sustained loss of service or network access.
+- OpenVPN requires the owned process group and Tunnelfolio's readiness condition.
+- WireGuard requires the exact managed interface and matching public-key identity.
+
+Do not require an empty WireGuard interface set while a WireGuard profile is connected. Require absence after authenticated disconnect and service stop. Retry a transient remote probe before acting; one failed proxy request is not enough evidence to roll back a working local network controller.
 
 ## Back up an installation
 
-Create a root-only destination on a filesystem appropriate for your host, then copy these paths without displaying their contents:
+Back up these paths to a root-only destination without displaying their contents:
 
 ```text
 /usr/local/bin/tunnelfolio
@@ -39,19 +118,32 @@ Create a root-only destination on a filesystem appropriate for your host, then c
 /var/lib/tunnelfolio/
 ```
 
-Include the reverse-proxy configuration that routes to Tunnelfolio. Record SHA-256 digests for the binary and unit, and confirm the backup files are readable before an upgrade.
+Also preserve the same-host proxy configuration. Record SHA-256 digests for the binary, unit, manifest, and backup archive, then test that the archive is readable.
 
 ## Upgrade
 
-1. Verify the release archive, checksum, and GitHub attestation as described in [release verification](release-verification.md).
-2. Back up the current binary, unit, configuration, state, and proxy route.
-3. Keep the verified archive contents in one directory and run:
+1. Verify the release archive, checksum, SBOM, and GitHub attestation as described in [release verification](release-verification.md).
+2. Back up the current installation and proxy route.
+3. Disconnect through the authenticated UI, stop the service, and prove the managed network state absent:
 
    ```bash
-   sudo ./install.sh install
+   sudo systemctl stop tunnelfolio
+   sudo ./install.sh check-disconnected
    ```
 
-4. Confirm that systemd is running the expected binary:
+4. Place the verified archive without activating it:
+
+   ```bash
+   sudo ./install.sh install-stopped
+   ```
+
+5. Review the exact placed files, then explicitly enable and start the service:
+
+   ```bash
+   sudo systemctl enable --now tunnelfolio
+   ```
+
+6. Verify the running artifact:
 
    ```bash
    sudo systemctl is-active tunnelfolio
@@ -59,7 +151,7 @@ Include the reverse-proxy configuration that routes to Tunnelfolio. Record SHA-2
    sudo sha256sum /proc/$(systemctl show -p MainPID --value tunnelfolio)/exe
    ```
 
-5. Test authenticated inventory, connect, switch, and disconnect operations for every installed backend. Verify DNS and outbound routing after each transition.
+7. Test authenticated inventory, import inspection, connect, switch, disconnect, and startup behavior for every installed protocol. Verify resolver and egress behavior after each network transition.
 
 The installer preserves `/etc/tunnelfolio` and `/var/lib/tunnelfolio`.
 
@@ -67,16 +159,15 @@ The installer preserves `/etc/tunnelfolio` and `/var/lib/tunnelfolio`.
 
 Use the verified backup from immediately before the upgrade.
 
-1. While Tunnelfolio is still available, use its authenticated **Disconnect** action. Confirm that status reports `disconnected`.
-2. Stop Tunnelfolio, then use the installer from the candidate archive to prove its service processes and every catalog-owned WireGuard interface are absent:
+1. Disconnect through the authenticated UI and confirm `disconnected`.
+2. Stop Tunnelfolio and prove its service processes and managed WireGuard interfaces absent:
 
    ```bash
    sudo systemctl stop tunnelfolio
    sudo ./install.sh check-disconnected
    ```
 
-   The check is intentionally fail-closed when `wg` is unavailable or absence cannot be established. Stopping the daemon alone is not sufficient: WireGuard interfaces survive daemon shutdown by design.
-3. Restore the previous binary, unit, configuration, state, and reverse-proxy route from the root-only backup.
+3. Restore the previous binary, unit, configuration, state, and proxy route.
 4. Reload and start the restored unit:
 
    ```bash
@@ -85,13 +176,15 @@ Use the verified backup from immediately before the upgrade.
    sudo systemctl is-active tunnelfolio
    ```
 
-5. Verify the authenticated health endpoint, one known-good profile, DNS, and outbound connectivity.
+5. Verify authenticated health, inventory, one known-good profile, resolver state, and outbound connectivity.
 
-If the authenticated API is unavailable, use local console access. Stop the service first so systemd cleans its OpenVPN control group. For each active WireGuard interface, map its exact name to one root-owned `.conf` file under `/etc/tunnelfolio/profiles/wireguard/<provider>/`, run `wg-quick down` with that exact file, and then run `sudo ./install.sh check-disconnected`. Do not restore or start another manager until the check passes. Never kill unrelated OpenVPN processes or remove WireGuard interfaces that do not map uniquely to the staged catalog.
+The absence check fails closed if systemd state, the control group, `wg`, or a managed interface cannot be inspected. Stopping the daemon alone is insufficient because WireGuard interfaces survive manager shutdown.
+
+If the API is unavailable, use local console access. Stop the service first so systemd cleans its OpenVPN control group. For WireGuard, map the exact active interface name to one file under `/var/lib/tunnelfolio/library/wireguard/<stable-id>/`, run `wg-quick down` with that file, then rerun `check-disconnected`. Do not stop an interface that does not map uniquely to one managed object.
 
 ## Uninstall
 
-Use the authenticated **Disconnect** action and confirm disconnected status before stopping the service. Uninstall refuses to proceed while the service is active, its control group contains a process, a catalog-owned WireGuard interface remains, or WireGuard absence cannot be queried:
+Disconnect, stop, and prove absence before uninstalling:
 
 ```bash
 sudo systemctl stop tunnelfolio
@@ -99,19 +192,19 @@ sudo ./install.sh check-disconnected
 sudo ./install.sh uninstall
 ```
 
-The uninstall action removes only the binary and unit. It preserves profiles, proxy token, preferences, and connection state under `/etc/tunnelfolio` and `/var/lib/tunnelfolio`.
+Uninstall removes the binary, systemd unit, and tmpfiles configuration. It preserves the proxy token, manifest, preferences, and profile objects under `/etc/tunnelfolio` and `/var/lib/tunnelfolio`.
 
-## Diagnose common failures
+## Diagnose failures
 
 | Symptom | Check | Action |
-| ------ | ----- | ------ |
-| Service will not start | `journalctl -u tunnelfolio -b` | Correct ownership or mode failures; do not broaden private file permissions |
-| Backend unavailable | `/healthz` backend reason | Install its command tools or restore its protocol profile directory, then restart |
-| `error_conflict` | `/api/status` through the proxy | Use authenticated disconnect; investigate if absence cannot be proved |
-| Connected profile treated as failed by a rollout monitor | Monitor's status/interface comparison | Accept the one runtime resource matching `/api/status`; require absence only after disconnect and stop |
-| OpenVPN profile rejected | Service log and [security policy](../SECURITY.md) | Remove unsupported supervision directives or fix confined referenced files |
-| Proxy authentication rejected | Reverse-proxy logs and header configuration | Restore the same-host HTTPS proxy contract; never expose the loopback listener |
+| ------- | ----- | ------ |
+| Service will not start | `journalctl -u tunnelfolio -b` | Correct the reported owner, mode, manifest, process-lock, or command failure; do not loosen private permissions |
+| Protocol unavailable | `/healthz` protocol reason | Install the missing protocol commands, then restart |
+| Managed-state conflict | Authenticated `/api/status` | Use **Disconnect** once; investigate if absence cannot be proved |
+| Status observation unavailable | Authenticated `/api/status` and service logs | Preserve the last-known result as stale; restore observation before another lifecycle action |
+| OpenVPN import rejected | Import review policy message | Use one self-contained, non-interactive profile without external files, scripts, plugins, or diagnostic overrides |
+| WireGuard import rejected | Import review policy message | Remove hooks or `SaveConfig`, correct the strict profile structure, and reinspect |
+| Proxy authentication rejected | Same-host proxy logs and headers | Restore HTTPS, identity, host, and token assertions; keep the application listener private |
+| Another instance will not start | Process-lock error | Stop the unintended process; never point two processes at one state directory |
 
-Security reports go through GitHub private vulnerability reporting. Operational support uses the repository channels in [SUPPORT.md](../SUPPORT.md); include sanitized versions, error classes, and topology, never profiles, keys, tokens, hostnames, or public addresses.
-
-Update this runbook after every production use that reveals a missing or inaccurate step.
+Security reports use GitHub private vulnerability reporting. Operational support uses [SUPPORT.md](../SUPPORT.md). Include sanitized versions, error classes, and topology; never include profiles, keys, tokens, certificates, hostnames, or public addresses.

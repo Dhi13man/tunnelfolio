@@ -1,68 +1,89 @@
-# Migrating an existing VPN manager
+# Migrating an existing VPN profile manager
 
-This guide moves trusted OpenVPN and WireGuard profiles into Tunnelfolio without modifying the source profiles or inheriting an unverified connected state.
+This procedure imports eligible OpenVPN and WireGuard client profiles into Tunnelfolio without rewriting or deleting the source files.
+
+Tunnelfolio v0.1.0 has no compatibility layer for an unreleased predecessor catalog. It assigns new opaque IDs and stores accepted profiles under `/var/lib/tunnelfolio`. Keep the old manager and files recoverable until the replacement passes your rollback rehearsal and soak.
 
 ## Prerequisites
 
-- Local administrative access and a tested rollback path.
-- A root-only backup of the existing binary, service unit, state, profiles, referenced secrets, and reverse-proxy configuration.
-- A verified Tunnelfolio binary and matching service unit.
-- Working `openvpn`, `wg`, and `wg-quick` commands for the backends you intend to use.
+- Local administrative access that does not depend on the VPN being migrated.
+- A tested host-local rollback path.
+- A root-only backup of the old binary, unit, state, profiles, referenced secrets, and proxy configuration.
+- A verified Tunnelfolio binary and matching systemd unit.
+- `openvpn` and/or `wg` plus `wg-quick` for the protocols being migrated.
+- An authenticated same-host HTTPS proxy route to Tunnelfolio.
 
-## Map profiles
+## Classify source profiles
 
-Tunnelfolio uses `<backend>/<provider>/<identifier>` IDs and this filesystem layout:
+Browser import accepts only self-contained, non-interactive files:
 
-```text
-/etc/tunnelfolio/profiles/
-├── openvpn/<provider>/<identifier>.ovpn
-└── wireguard/<provider>/<identifier>.conf
-```
+- OpenVPN: one `.ovpn` file with inline certificates and keys. External references, credential prompts, includes, scripts, plugins, management interfaces, daemonization, and arbitrary output paths are rejected.
+- WireGuard: one `.conf` file in the supported `wg-quick` subset. `PreUp`, `PostUp`, `PreDown`, `PostDown`, and `SaveConfig` are rejected.
 
-Copy profiles; do not move or rewrite the legacy source. Use `mullvad` only for Mullvad profiles and `generic` for operator-classified profiles without provider enrichment. Directories must be root-owned mode `0700`; profiles and referenced secrets must be root-owned regular files mode `0600`.
+Do not weaken the policy to force a migration. Retain unsupported source profiles with the old manager until they can be converted by their trusted issuer or a separate design supports them safely.
 
-OpenVPN profiles must be non-interactive and self-contained through confined file references. Tunnelfolio rejects includes, daemonization, management interfaces, PID-file directives, and unsupported credential paths. Review every profile as root-equivalent policy before copying it.
+## Prepare the cutover
 
-## Migrate preferences
+1. Back up the existing manager and verify the archive.
+2. Record the current active profile, favorites, recents, resolver state, routes, and outbound connectivity without recording secret profile contents.
+3. Do not run the normal installer while the incumbent still owns Tunnelfolio's production port or paths. Extract the verified candidate under a root-owned `0700` staging directory instead.
+4. If profiles must be imported before downtime, run a transient `tunnelfolio-prepare` unit on an unused loopback address such as `127.0.0.1:50003`, with an isolated state directory and proxy-token file. Put a temporary authenticated same-host proxy on a different listener, such as `127.0.0.1:50002`, and expose only that proxy. Do not point either process at production state.
+5. Keep the prepared instance disconnected in **Manual** mode. Stop it after import, inspect its exact systemd `MainPID` and control group, and prove that its managed WireGuard interface set is empty. Do not use a host-wide OpenVPN process-name search as an ownership test.
+6. Arm a rollback mechanism that can restore the old manager from the local console if remote access disappears.
 
-Map a favorite or recent value only when it identifies exactly one copied profile. Store the full new ID, such as `wireguard/mullvad/mullvad_de`. Drop ambiguous or missing entries and record the omission outside the repository.
+## Import profiles
 
-Do not copy a legacy “connected” claim into `state.json`. Start Tunnelfolio disconnected after the legacy manager and its owned process or interface have been cleanly stopped.
+1. Open Tunnelfolio through the authenticated proxy.
+2. Select **Import profiles** and choose up to 100 source files.
+3. Review protocol detection and every policy finding.
+4. Set a display name, Group, and optional location. Group is an operator label such as `Mullvad`, `Work`, or `Home Lab`; it is not verified provider provenance.
+5. Confirm trust and import.
+6. Repeat until the intended eligible profile set is present.
 
-## Canary the catalog
+Import preserves accepted bytes, detects exact duplicates, publishes each batch atomically, and never connects a profile. Tunnelfolio does not preserve old path-based IDs. Recreate favorites and recents through the interface only when the source mapping is unambiguous.
 
-Run the verified binary in trusted-proxy, read-only mode on an unused loopback port before changing the active service:
+## Verify before stopping the old manager
 
-```bash
-sudo /usr/local/bin/tunnelfolio \
-  --listen 127.0.0.1:50002 \
-  --profiles-dir /etc/tunnelfolio/profiles \
-  --state-dir /var/lib/tunnelfolio-canary \
-  --trusted-proxy \
-  --proxy-token-file /etc/tunnelfolio/proxy-token \
-  --read-only
-```
+Use read-only operations only. Confirm:
 
-Route a temporary authenticated HTTPS proxy location to this port with the same overwritten trusted headers used by production. Expected behavior: the proxied `/healthz` reports the process live, profile inventory contains only the copied profiles, requests without valid proxy assertions are rejected, and every authenticated mutation returns `read_only`. Stop the canary and remove its temporary proxy route before production cutover.
+- `/healthz` reports the expected protocol tools;
+- the profile count and metadata match the intended source set;
+- direct requests to the selected prepared listener (`127.0.0.1:50003` in this example) without proxy assertions return `401`;
+- the temporary authenticated proxy returns the prepared interface and profile inventory;
+- the old manager still owns the current network state;
+- Tunnelfolio has not created an OpenVPN process or WireGuard interface.
+
+Do not run two mutable managers against the same network profiles.
 
 ## Cut over
 
-1. Arm and test a host-local rollback mechanism that survives loss of remote network access.
-2. Stop the legacy service and prove its managed OpenVPN process group and WireGuard interfaces are absent.
-3. Install the verified Tunnelfolio binary and unit, then route the authenticated HTTPS proxy to `127.0.0.1:50001` with the required trusted headers.
-4. Start Tunnelfolio and verify health plus inventory before connecting a profile.
-5. Test connect, switch, disconnect, DNS, and outbound connectivity for each installed backend. Exercise cross-backend switches in both directions when both are installed.
-6. Reboot the host and repeat health, cleanup, and connectivity checks.
-7. Exercise the rollback once, then repeat the forward cutover from the same verified artifacts.
+1. Disconnect through the old manager.
+2. Stop it and prove its OpenVPN processes, WireGuard interfaces, routes, and resolver changes absent.
+3. Stop and collect the prepared transient unit and remove its temporary proxy route. Prove its exact control group empty before continuing.
+4. Run `sudo ./install.sh install-stopped` from the verified candidate only now. Copy the verified contents of prepared managed state into the empty production state directory with root ownership and private modes, or import again through the production instance; do not merge manifests by hand.
+5. Configure the production authenticated proxy, then enable and start Tunnelfolio. Verify health plus inventory before connecting.
+6. Connect one known-good profile for each imported protocol.
+7. Test same-protocol and cross-protocol switches in both directions.
+8. Test a failed target and verify that the prior working profile is restored.
+9. Disconnect and verify interface, process, route, resolver, and egress cleanup.
+10. If restart restoration is wanted, choose **Restore the last desired profile** in Settings, reconnect the intended profile, and test both service restart and host reboot.
+11. Rehearse rollback once, then repeat the forward cutover from the same verified artifacts.
 
-During the soak, compare the authenticated `/api/status` profile with the observed runtime resource. Exactly one matching OpenVPN process group or WireGuard interface is expected while connected. Do not require an empty WireGuard interface set until after authenticated disconnect and service stop, and do not trigger immediate rollback from one transient remote health sample.
-
-For PID-based OpenVPN census, first fail the sample if Tunnelfolio is inactive, its systemd `MainPID` is invalid, or the manager's `/proc/<pid>/ns/net` cannot be read. Compare each candidate with that network namespace, ignore processes in other namespaces, and fail the sample closed if a live candidate's namespace cannot be read.
-
-Keep the legacy files and backups until the replacement has completed the operator-selected soak and at least one later verified release or 30 days have passed, whichever is later.
+During the soak, compare authenticated `/api/status` with the exact observed OpenVPN process or WireGuard interface. A connected WireGuard profile should have one matching managed interface; require an empty managed interface set only after disconnect and stop.
 
 ## Roll back
 
-Use the authenticated **Disconnect** action, stop Tunnelfolio, and run the candidate archive's `sudo ./install.sh check-disconnected`. If the API is unavailable, use the ownership-safe local-console procedure in the [operations runbook](operations.md). Restore the backed-up service and proxy route only after the absence check passes, then verify the legacy health endpoint and one known-good connection. Preserve Tunnelfolio logs only after redacting private infrastructure and secret-bearing data.
+1. Disconnect through Tunnelfolio and confirm `disconnected`.
+2. Stop the service and run the candidate archive's absence check:
 
-For routine commands and diagnosis, see [Operating Tunnelfolio](operations.md).
+   ```bash
+   sudo systemctl stop tunnelfolio
+   sudo ./install.sh check-disconnected
+   ```
+
+3. Restore the old binary, unit, state, files, and proxy route only after the check passes.
+4. Start the old manager and verify its authenticated health plus one known-good connection.
+
+If the Tunnelfolio API is unavailable, use the ownership-safe local-console procedure in the [operations runbook](operations.md#roll-back). Never start the old manager while a Tunnelfolio-owned network resource may remain.
+
+Keep the source profiles and verified rollback backup until the final Tunnelfolio artifact has passed the operator-selected soak and at least one later verified release or 30 days have passed, whichever is later.

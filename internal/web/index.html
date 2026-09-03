@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Tunnelfolio · Tunnel profiles</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="site-header">
+    <div class="brand-block">
+      <p class="eyebrow">One host · one outbound tunnel</p>
+      <h1>Tunnelfolio</h1>
+    </div>
+    <a class="button button-quiet current-tunnel-link" href="#current-tunnel">Current tunnel</a>
+    <div class="header-actions" aria-label="Application actions">
+      <button id="import-open" class="button button-primary" type="button">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4"/></svg>
+        <span>Import profiles</span>
+      </button>
+      <button id="settings-open" class="button" type="button">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M4 7h10m4 0h2M4 17h2m4 0h10M14 4v6M6 14v6"/></svg>
+        <span>Settings</span>
+      </button>
+    </div>
+  </header>
+
+  <div id="page-error" class="page-message page-message-error" hidden>
+    <div>
+      <h2 id="page-error-title" tabindex="-1">Request failed</h2>
+      <p id="page-error-text"></p>
+    </div>
+    <button id="page-error-dismiss" class="button button-quiet" type="button">Dismiss</button>
+  </div>
+  <p id="page-error-announcer" class="sr-only" aria-live="assertive" aria-atomic="true"></p>
+
+  <p id="read-only-notice" class="mode-notice" hidden><strong>Read-only mode.</strong> You can inspect profiles and tunnel status, but changes are disabled.</p>
+
+  <section id="current-tunnel" class="current-tunnel" aria-labelledby="current-region-title" aria-busy="true">
+    <span id="current-marker" class="state-marker" aria-hidden="true"></span>
+    <div class="current-heading">
+      <h2 id="current-region-title" class="eyebrow">Current tunnel</h2>
+      <p id="current-title" class="current-name" tabindex="-1">Loading status</p>
+    </div>
+    <div class="current-evidence">
+      <p id="current-state">Reading protocol state…</p>
+      <p id="current-metrics" class="mono"></p>
+      <p id="current-observed" class="muted"></p>
+    </div>
+    <div class="current-actions">
+      <button id="disconnect" class="button" type="button" hidden>Disconnect</button>
+      <button id="status-refresh" class="button button-quiet" type="button">Refresh status</button>
+      <button id="status-pause" class="button button-quiet" type="button" aria-pressed="false">Pause status updates</button>
+    </div>
+  </section>
+
+  <p id="status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+  <p id="import-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+  <section id="import-status" class="import-status" aria-labelledby="import-status-title" tabindex="-1" hidden>
+    <h2 id="import-status-title">Import status</h2>
+    <p id="import-status-text"></p>
+  </section>
+
+  <main id="main-content" class="folio" tabindex="-1" aria-busy="true" data-screen="library">
+    <aside class="folio-index" aria-labelledby="index-title">
+      <h2 id="index-title">Index</h2>
+      <fieldset id="view-filter" class="view-filter">
+        <legend>Profile view</legend>
+        <label><input type="radio" name="profile-view" value="all" checked> All</label>
+        <label><input type="radio" name="profile-view" value="favorites"> Favorites</label>
+        <label><input type="radio" name="profile-view" value="recent"> Recent</label>
+      </fieldset>
+      <div class="field">
+        <label for="group-filter">Group</label>
+        <select id="group-filter"><option value="">All groups</option></select>
+      </div>
+      <div class="protocol-key" aria-label="Protocol availability">
+        <h3>Protocols</h3>
+        <p id="openvpn-availability"><span class="key-mark" aria-hidden="true"></span> OpenVPN · checking</p>
+        <p id="wireguard-availability"><span class="key-mark" aria-hidden="true"></span> WireGuard · checking</p>
+      </div>
+    </aside>
+
+    <section id="library-screen" class="profile-library" aria-labelledby="profiles-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Trusted library</p>
+          <h2 id="profiles-title" tabindex="-1">Profiles</h2>
+        </div>
+        <p id="result-count" class="count" role="status" aria-live="polite">Loading profiles</p>
+      </div>
+      <form id="profile-filters" class="library-filters" role="search">
+        <div class="field field-grow">
+          <label for="profile-search">Search profiles</label>
+          <input id="profile-search" type="search" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="location-filter">Location</label>
+          <select id="location-filter"><option value="">All locations</option></select>
+        </div>
+        <div class="field">
+          <label for="protocol-filter">Protocol</label>
+          <select id="protocol-filter">
+            <option value="">All protocols</option>
+            <option value="openvpn">OpenVPN</option>
+            <option value="wireguard">WireGuard</option>
+          </select>
+        </div>
+      </form>
+      <a id="skip-profile-list" class="inline-skip" href="#detail-title" hidden>Skip profile list</a>
+      <div id="library-error" class="local-message" hidden>
+        <h3 tabindex="-1">Profiles could not be loaded</h3>
+        <p>Your current tunnel status is still available. Refresh the library to try again.</p>
+        <button id="library-retry" class="button" type="button">Refresh library</button>
+      </div>
+      <section id="library-empty" class="empty-state" aria-labelledby="library-empty-title" hidden>
+        <h3 id="library-empty-title" tabindex="-1">No profiles yet</h3>
+        <p>Import self-contained OpenVPN or WireGuard profiles to build this host’s tunnel library.</p>
+        <button id="empty-import" class="button button-primary" type="button">Import profiles</button>
+      </section>
+      <section id="filtered-empty" class="empty-state" aria-labelledby="filtered-empty-title" hidden>
+        <h3 id="filtered-empty-title" tabindex="-1">No profiles match</h3>
+        <p>Change the search, view, Group, location, or protocol filter.</p>
+        <button id="clear-filters" class="button" type="button">Clear filters</button>
+      </section>
+      <ul id="profile-list" class="profile-list" aria-label="Profiles"></ul>
+    </section>
+
+    <section id="detail-screen" class="profile-detail" aria-labelledby="detail-title">
+      <button id="detail-back" class="button button-quiet detail-back" type="button">Return to profiles</button>
+      <div id="detail-content">
+        <p class="eyebrow">Selected profile</p>
+        <h2 id="detail-title" tabindex="-1">No profile selected</h2>
+        <p class="muted">Choose one profile from the library to inspect its runtime identity and available actions.</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="import-dialog" class="dialog dialog-tall" aria-labelledby="import-title">
+    <div class="dialog-shell">
+      <header class="dialog-header">
+        <div>
+          <p class="eyebrow">Managed library</p>
+          <h2 id="import-title" tabindex="-1">Import profiles</h2>
+        </div>
+        <button id="import-close" class="button button-quiet" type="button">Close</button>
+      </header>
+      <ol class="step-list" aria-label="Import progress">
+        <li id="import-step-choose" aria-current="step">1 · Choose</li>
+        <li id="import-step-inspect">2 · Inspect</li>
+        <li id="import-step-review">3 · Review</li>
+        <li id="import-step-import">4 · Import</li>
+      </ol>
+      <div id="import-errors" class="error-summary" role="alert" tabindex="-1" hidden>
+        <h3>Review the import</h3>
+        <ul id="import-error-list"></ul>
+      </div>
+      <section id="import-choose-panel" class="import-panel" aria-labelledby="import-choose-title">
+        <h3 id="import-choose-title">Choose trusted profile files</h3>
+        <p>Files stay in this browser until inspection and are uploaded again only when you confirm import.</p>
+        <div id="drop-target" class="drop-target">
+          <label for="profile-files">OpenVPN or WireGuard profile files (.ovpn or .conf)</label>
+          <input id="profile-files" type="file" accept=".ovpn,.conf" multiple required>
+          <p id="file-selection" class="muted">No files selected · up to 100 files, 1 MiB each</p>
+        </div>
+        <div class="dialog-actions">
+          <button id="inspect-profiles" class="button button-primary" type="button">Inspect profiles</button>
+        </div>
+      </section>
+      <section id="import-inspect-panel" class="import-panel" aria-labelledby="import-inspect-title" hidden>
+        <h3 id="import-inspect-title">Inspecting profiles</h3>
+        <p>Tunnelfolio is checking file structure, import policy, duplicates, and installed protocol tooling.</p>
+        <div class="dialog-actions">
+          <button id="cancel-inspection" class="button" type="button">Cancel inspection</button>
+        </div>
+      </section>
+      <section id="import-review-panel" class="import-panel" aria-labelledby="import-review-title" hidden>
+        <h3 id="import-review-title" tabindex="-1">Review profiles</h3>
+        <div class="field batch-group">
+          <label for="batch-group">Group for this batch</label>
+          <input id="batch-group" type="text" maxlength="256" value="Unsorted" aria-describedby="batch-group-hint">
+          <p id="batch-group-hint" class="field-hint">You can edit any file separately below.</p>
+        </div>
+        <div id="import-review-list" class="import-review-list"></div>
+        <label class="trust-check" for="trust-profiles">
+          <input id="trust-profiles" type="checkbox">
+          <span>I trust these files to change this host’s network configuration.</span>
+        </label>
+        <div class="dialog-actions">
+          <button id="inspect-again" class="button" type="button">Inspect again</button>
+          <button id="commit-import" class="button button-primary" type="button">Import profiles</button>
+        </div>
+      </section>
+      <section id="import-outcome-panel" class="import-panel" aria-labelledby="import-outcome-title" hidden>
+        <h3 id="import-outcome-title" tabindex="-1">Import complete</h3>
+        <p id="import-outcome-text"></p>
+        <div class="dialog-actions">
+          <button id="import-finish" class="button button-primary" type="button">Return to profiles</button>
+        </div>
+      </section>
+      <div id="import-discard" class="dialog-notice" hidden>
+        <p>Closing now discards the selected browser files and review edits.</p>
+        <div class="dialog-actions">
+          <button id="keep-import" class="button" type="button">Keep reviewing</button>
+          <button id="discard-import" class="button button-danger" type="button">Discard and close</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
+    <form id="settings-form" class="dialog-shell">
+      <header class="dialog-header">
+        <div>
+          <p class="eyebrow">Host behavior</p>
+          <h2 id="settings-title" tabindex="-1">Settings</h2>
+        </div>
+        <button id="settings-close" class="button button-quiet" type="button">Close</button>
+      </header>
+      <div id="settings-error" class="local-message local-message-error" role="alert" tabindex="-1" hidden></div>
+      <fieldset>
+        <legend>Startup connection</legend>
+        <label><input type="radio" name="startup-mode" value="manual"> Start disconnected</label>
+        <label><input type="radio" name="startup-mode" value="restore"> Restore the last desired profile</label>
+      </fieldset>
+      <p class="field-hint">Restore makes one bounded attempt during service startup. It does not retry forever.</p>
+      <section class="settings-section" aria-labelledby="stored-views-title">
+        <h3 id="stored-views-title">Stored views</h3>
+        <p>Favorites and the five most recent profiles are saved on this host.</p>
+        <div class="button-row">
+          <button id="clear-favorites" class="button" type="button">Clear favorites</button>
+          <button id="clear-recents" class="button" type="button">Clear recents</button>
+        </div>
+      </section>
+      <div class="dialog-actions">
+        <button id="save-settings" class="button button-primary" type="submit">Save settings</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="edit-dialog" class="dialog" aria-labelledby="edit-title">
+    <form id="edit-form" class="dialog-shell">
+      <header class="dialog-header">
+        <h2 id="edit-title" tabindex="-1">Edit profile metadata</h2>
+        <button id="edit-close" class="button button-quiet" type="button">Close</button>
+      </header>
+      <div id="edit-error" class="local-message local-message-error" role="alert" tabindex="-1" hidden></div>
+      <div class="field"><label for="edit-name">Display name</label><input id="edit-name" type="text" maxlength="512" required></div>
+      <div class="field"><label for="edit-group">Group</label><input id="edit-group" type="text" maxlength="256" required></div>
+      <div class="field"><label for="edit-location">Location <span class="muted">(optional)</span></label><input id="edit-location" type="text" maxlength="320"></div>
+      <div class="dialog-actions"><button class="button button-primary" type="submit">Save metadata</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title">
+    <div class="dialog-shell">
+      <h2 id="confirm-title" tabindex="-1">Confirm change</h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" class="button" type="button">Cancel</button>
+        <button id="confirm-action" class="button button-danger" type="button">Confirm</button>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>
