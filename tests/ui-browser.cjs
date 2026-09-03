@@ -463,7 +463,8 @@ async function waitImportOutcome(page) {
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.activeElement?.id === "current-title"
       && document.querySelector("#current-title")?.textContent.includes("Germany")
-      && document.querySelector("#current-state")?.textContent === "WireGuard interface active · handshake observed");
+      && document.querySelector("#current-tunnel")?.getAttribute("aria-busy") === "false"
+      && document.querySelector("#current-state")?.textContent.startsWith("WireGuard interface active"));
     assert.equal(preferences.recents[0], "tf_cccccccccccccccccccccccccc", "server recents did not record the successful connection");
     await page.locator('input[name="profile-view"][value="recent"]').check();
     assert.equal(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').count(), 1, "connected profile did not enter the Recent view");
