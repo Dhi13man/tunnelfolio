@@ -201,7 +201,7 @@ async function tapFocusedInputWithCDP(page, selector) {
     adb(
       "shell", "am", "start", "-W",
       "-a", "android.intent.action.VIEW",
-      "-d", "about:blank",
+      "-d", `${origin}/healthz`,
       "-p", "com.android.chrome",
       "--ez", "com.android.chrome.firstrun.SKIP_FIRST_RUN_EXPERIENCE", "true",
     );
