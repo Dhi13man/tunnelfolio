@@ -12,7 +12,6 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="site-header">
     <div class="brand-block">
-      <p class="eyebrow">One host · one outbound tunnel</p>
       <h1>Tunnelfolio</h1>
     </div>
     <a class="button button-quiet current-tunnel-link" href="#current-tunnel">Current tunnel</a>
@@ -42,7 +41,7 @@
   <section id="current-tunnel" class="current-tunnel" aria-labelledby="current-region-title" aria-busy="true">
     <span id="current-marker" class="state-marker" aria-hidden="true"></span>
     <div class="current-heading">
-      <h2 id="current-region-title" class="eyebrow">Current tunnel</h2>
+      <h2 id="current-region-title" class="route-label">Current tunnel</h2>
       <p id="current-title" class="current-name" tabindex="-1">Loading status</p>
     </div>
     <div class="current-evidence">
@@ -65,37 +64,25 @@
   </section>
 
   <main id="main-content" class="folio" tabindex="-1" aria-busy="true" data-screen="library">
-    <aside class="folio-index" aria-labelledby="index-title">
-      <h2 id="index-title">Index</h2>
-      <fieldset id="view-filter" class="view-filter">
-        <legend>Profile view</legend>
-        <label><input type="radio" name="profile-view" value="all" checked> All</label>
-        <label><input type="radio" name="profile-view" value="favorites"> Favorites</label>
-        <label><input type="radio" name="profile-view" value="recent"> Recent</label>
-      </fieldset>
-      <div class="field">
-        <label for="group-filter">Group</label>
-        <select id="group-filter"><option value="">All groups</option></select>
-      </div>
-      <div class="protocol-key" aria-label="Protocol availability">
-        <h3>Protocols</h3>
-        <p id="openvpn-availability"><span class="key-mark" aria-hidden="true"></span> OpenVPN · checking</p>
-        <p id="wireguard-availability"><span class="key-mark" aria-hidden="true"></span> WireGuard · checking</p>
-      </div>
-    </aside>
-
     <section id="library-screen" class="profile-library" aria-labelledby="profiles-title">
       <div class="section-heading">
-        <div>
-          <p class="eyebrow">Trusted library</p>
-          <h2 id="profiles-title" tabindex="-1">Profiles</h2>
-        </div>
+        <h2 id="profiles-title" tabindex="-1">Profiles</h2>
         <p id="result-count" class="count" role="status" aria-live="polite">Loading profiles</p>
       </div>
       <form id="profile-filters" class="library-filters" role="search">
+        <fieldset id="view-filter" class="view-filter">
+          <legend>Show</legend>
+          <label><input type="radio" name="profile-view" value="all" checked> All</label>
+          <label><input type="radio" name="profile-view" value="favorites"> Favorites</label>
+          <label><input type="radio" name="profile-view" value="recent"> Recent</label>
+        </fieldset>
         <div class="field field-grow">
           <label for="profile-search">Search profiles</label>
           <input id="profile-search" type="search" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="group-filter">Group</label>
+          <select id="group-filter"><option value="">All groups</option></select>
         </div>
         <div class="field">
           <label for="location-filter">Location</label>
@@ -132,9 +119,8 @@
     <section id="detail-screen" class="profile-detail" aria-labelledby="detail-title">
       <button id="detail-back" class="button button-quiet detail-back" type="button">Return to profiles</button>
       <div id="detail-content">
-        <p class="eyebrow">Selected profile</p>
         <h2 id="detail-title" tabindex="-1">No profile selected</h2>
-        <p class="muted">Choose one profile from the library to inspect its runtime identity and available actions.</p>
+        <p class="muted">Choose a profile to see its details and actions.</p>
       </div>
     </section>
   </main>
@@ -143,7 +129,6 @@
     <div class="dialog-shell">
       <header class="dialog-header">
         <div>
-          <p class="eyebrow">Managed library</p>
           <h2 id="import-title" tabindex="-1">Import profiles</h2>
         </div>
         <button id="import-close" class="button button-quiet" type="button">Close</button>
@@ -215,7 +200,6 @@
     <form id="settings-form" class="dialog-shell">
       <header class="dialog-header">
         <div>
-          <p class="eyebrow">Host behavior</p>
           <h2 id="settings-title" tabindex="-1">Settings</h2>
         </div>
         <button id="settings-close" class="button button-quiet" type="button">Close</button>
@@ -227,6 +211,13 @@
         <label><input type="radio" name="startup-mode" value="restore"> Restore the last desired profile</label>
       </fieldset>
       <p class="field-hint">Restore makes one bounded attempt during service startup. It does not retry forever.</p>
+      <section class="settings-section" aria-labelledby="protocol-tools-title">
+        <h3 id="protocol-tools-title">Protocol tools</h3>
+        <div class="protocol-key" aria-label="Protocol availability">
+          <p id="openvpn-availability"><span class="key-mark" aria-hidden="true"></span> OpenVPN · checking</p>
+          <p id="wireguard-availability"><span class="key-mark" aria-hidden="true"></span> WireGuard · checking</p>
+        </div>
+      </section>
       <section class="settings-section" aria-labelledby="stored-views-title">
         <h3 id="stored-views-title">Stored views</h3>
         <p>Favorites and the five most recent profiles are saved on this host.</p>
