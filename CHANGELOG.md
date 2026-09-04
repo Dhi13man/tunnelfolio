@@ -50,7 +50,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Security
 
-- Upgrade `x/crypto` to v0.55.0, `x/net` to v0.58.0, `x/sys` to v0.47.0,
+- Upgrade `x/crypto` to v0.56.0, `x/net` to v0.58.0, `x/sys` to v0.47.0,
   and `x/text` to v0.41.0 to clear pre-release security advisories.
 - Bump quic-go to v0.59.1 to address GO-2026-5676.
 
