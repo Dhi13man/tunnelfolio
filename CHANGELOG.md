@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-04
+
 ### Added
 
 - Browser import for self-contained OpenVPN and WireGuard profiles with strict
@@ -53,3 +55,4 @@ All notable changes to this project are documented here. The format is based on
 - Bump quic-go to v0.59.1 to address GO-2026-5676.
 
 [Unreleased]: https://github.com/Dhi13man/tunnelfolio/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Dhi13man/tunnelfolio/releases/tag/v0.1.0
