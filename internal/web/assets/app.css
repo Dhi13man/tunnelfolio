@@ -115,7 +115,7 @@ input[type="radio"], input[type="checkbox"] { inline-size: 1.15rem; block-size: 
 .empty-state[hidden], .local-message[hidden] { display: none; }
 .local-message-error { border-color: var(--state-danger); }
 
-.detail-back { display: none; margin-block-end: 1rem; }
+.detail-back { margin-block-end: 1rem; }
 .detail-title { margin-block-end: .7rem; font-family: var(--font-display); font-size: clamp(1.75rem, 3.2vw, 2.65rem); font-weight: 650; letter-spacing: -.04em; line-height: 1.05; }
 .detail-status { margin-block-end: .8rem; padding: .65rem .75rem; border-inline-start: 3px solid var(--border-control); background: var(--surface-raised); color: var(--text-secondary); }
 .detail-status[data-state="active"] { border-color: var(--state-active); color: var(--text-primary); }
@@ -186,7 +186,6 @@ input[type="file"]::file-selector-button { min-block-size: 44px; margin-inline-e
   .folio { display: block; min-block-size: 0; }
   .profile-library { border-inline-end: 0; }
   .profile-detail { min-block-size: 18rem; }
-  .detail-back { display: inline-flex; }
   .folio[data-screen="library"] .profile-detail { display: none; }
   .folio[data-screen="detail"] .profile-library { display: none; }
   .folio[data-screen="detail"] .profile-detail { display: block; }
