@@ -180,9 +180,9 @@ input[type="file"]::file-selector-button { min-block-size: 44px; margin-inline-e
   .header-actions { grid-column: 1 / -1; inline-size: 100%; }
   .header-actions .button { flex: 1; }
   .header-actions .button span { overflow-wrap: anywhere; }
-  .current-tunnel { grid-template-columns: minmax(0, 1fr) auto; }
-  .current-evidence { grid-column: 1 / -1; }
-  .current-actions { grid-column: 2; grid-row: 1; align-self: end; }
+  .current-tunnel { grid-template-columns: minmax(0, 1fr); }
+  .current-evidence, .current-actions { grid-column: 1; }
+  .current-actions { grid-row: auto; justify-content: start; padding-inline-end: 0; }
   .folio { display: block; min-block-size: 0; }
   .profile-library { border-inline-end: 0; }
   .profile-detail { min-block-size: 18rem; }
