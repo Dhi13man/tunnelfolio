@@ -11,7 +11,9 @@ function element(name, className, text) {
 }
 
 function addDefinition(list, term, value) {
-  list.append(element("dt", "", term), element("dd", "", value || "—"));
+  const item = element("div", "definition");
+  item.append(element("dt", "", term), element("dd", "", value || "—"));
+  list.append(item);
 }
 
 function active(profile) {
@@ -40,10 +42,9 @@ export function createDetailController({ connection, confirm, onError, onChanged
   const editLocation = document.querySelector("#edit-location");
   let editOpener = null;
 
-  function empty(message = "Choose one profile from the library to inspect its runtime identity and available actions.") {
+  function empty(message = "Choose a profile to see its details and actions.") {
     back.hidden = true;
     container.replaceChildren();
-    container.append(element("p", "eyebrow", "Selected profile"));
     const heading = element("h2", "", "No profile selected");
     heading.id = "detail-title";
     heading.tabIndex = -1;
@@ -57,36 +58,45 @@ export function createDetailController({ connection, confirm, onError, onChanged
     }
     back.hidden = false;
     container.replaceChildren();
-    container.append(element("p", "eyebrow", "Selected profile"));
-    const heading = element("h2", "", `Profile details: ${profile.display_name}`);
+    const heading = element("h2", "detail-title");
     heading.id = "detail-title";
     heading.tabIndex = -1;
+    heading.append(element("span", "sr-only", "Profile details: "), document.createTextNode(profile.display_name));
     container.append(heading);
 
     const status = element("p", "detail-status", "");
     status.id = "detail-status";
     container.append(status);
 
-    const definitions = element("dl");
-    addDefinition(definitions, "Protocol", profile.protocol === "wireguard" ? "WireGuard" : "OpenVPN");
-    addDefinition(definitions, "Group", profile.group);
-    addDefinition(definitions, "Location", profile.location);
-    addDefinition(definitions, "Runtime identifier", profile.identifier);
-    addDefinition(definitions, "Original file", profile.original_filename);
-    addDefinition(definitions, "Imported", new Date(profile.imported_at).toLocaleString());
-    container.append(definitions);
-
-    const protocolDetails = element("dl");
-    protocolDetails.id = "protocol-details";
-    protocolDetails.setAttribute("aria-label", "Current protocol details");
-    container.append(protocolDetails);
-
-    const actions = element("div", "detail-actions");
+    const primaryActions = element("div", "detail-primary-actions");
     const connect = element("button", "button button-primary", "Connect");
     connect.type = "button";
     connect.dataset.detailAction = "connect";
     connect.addEventListener("click", () => connection.connect(profile));
-    actions.append(connect);
+    primaryActions.append(connect);
+    container.append(primaryActions);
+
+    const definitions = element("dl", "profile-summary");
+    addDefinition(definitions, "Protocol", profile.protocol === "wireguard" ? "WireGuard" : "OpenVPN");
+    addDefinition(definitions, "Group", profile.group);
+    addDefinition(definitions, "Location", profile.location);
+    container.append(definitions);
+
+    const technical = element("details", "technical-details");
+    technical.append(element("summary", "", "Technical details"));
+    const technicalDefinitions = element("dl");
+    addDefinition(technicalDefinitions, "Runtime identifier", profile.identifier);
+    addDefinition(technicalDefinitions, "Original file", profile.original_filename);
+    addDefinition(technicalDefinitions, "Imported", new Date(profile.imported_at).toLocaleString());
+    technical.append(technicalDefinitions);
+
+    const protocolDetails = element("dl");
+    protocolDetails.id = "protocol-details";
+    protocolDetails.setAttribute("aria-label", "Current protocol details");
+    technical.append(protocolDetails);
+    container.append(technical);
+
+    const actions = element("div", "detail-actions");
 
     const favorite = element("button", "button", profile.favorite ? "Remove favorite" : "Add favorite");
     favorite.type = "button";

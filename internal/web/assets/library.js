@@ -10,7 +10,7 @@ function rowState(profile) {
   const connected = appState.status?.connected && appState.status.profile?.id === profile.id;
   const labels = [protocolName(profile.protocol)];
   if (!profile.available) labels.push("Unavailable");
-  if (appState.selectedID === profile.id) labels.push("Shown in details");
+  if (appState.selectedID === profile.id) labels.push("Selected");
   if (connected) labels.push("Connected");
   return labels.join(" · ");
 }

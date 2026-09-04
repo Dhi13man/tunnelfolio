@@ -15,8 +15,9 @@ All notable changes to this project are documented here. The format is based on
   derived filters, safe inactive-profile removal, and a 100-profile capacity.
 - Manual startup by default with opt-in restoration of the last desired
   profile.
-- Folio Desk interface with protocol-native status, narrow list-to-detail
-  navigation, import review, persistent recovery states, and pauseable polling.
+- Route Ledger interface with a two-pane profile library, protocol-native
+  status, narrow list-to-detail navigation, import review, persistent recovery
+  states, and pauseable polling.
 - Chromium and Firefox accessibility checks across lifecycle, import, error,
   read-only, reflow, forced-colors, touch, and bounded-capacity states.
 - Deterministic same- and cross-backend switching with restoration after a

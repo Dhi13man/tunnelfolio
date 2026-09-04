@@ -328,6 +328,31 @@ async function assertHeaderContract(page, narrowLayout) {
   }
 }
 
+async function assertSimplifiedWorkspace(page) {
+  const structure = await page.evaluate(() => {
+    const folio = document.querySelector("#main-content");
+    const library = document.querySelector("#library-screen").getBoundingClientRect();
+    const detail = document.querySelector("#detail-screen").getBoundingClientRect();
+    return {
+      legacyIndexCount: document.querySelectorAll(".folio-index").length,
+      display: getComputedStyle(folio).display,
+      libraryRight: library.right,
+      detailLeft: detail.left,
+      viewsInFilters: document.querySelector("#profile-filters #view-filter") !== null,
+      groupInFilters: document.querySelector("#profile-filters #group-filter") !== null,
+      openVPNInSettings: document.querySelector("#settings-dialog #openvpn-availability") !== null,
+      wireGuardInSettings: document.querySelector("#settings-dialog #wireguard-availability") !== null,
+    };
+  });
+  assert.equal(structure.legacyIndexCount, 0, "the retired index pane is still rendered");
+  assert.equal(structure.display, "grid", "wide workspace is not a two-pane grid");
+  assert.ok(Math.abs(structure.libraryRight - structure.detailLeft) <= 1, "wide library and detail panes do not meet");
+  assert.equal(structure.viewsInFilters, true, "profile views did not move into the library filters");
+  assert.equal(structure.groupInFilters, true, "group filtering did not move into the library filters");
+  assert.equal(structure.openVPNInSettings, true, "OpenVPN availability did not move into Settings");
+  assert.equal(structure.wireGuardInSettings, true, "WireGuard availability did not move into Settings");
+}
+
 async function tabTo(page, selector, { reverse = false, limit = 40 } = {}) {
   for (let count = 0; count < limit; count += 1) {
     await page.keyboard.press(reverse ? "Shift+Tab" : "Tab");
@@ -385,6 +410,7 @@ async function waitImportOutcome(page) {
     for (const ink of ["text-primary", "text-secondary"]) assert.ok(contrast(tokens[ink], tokens["surface-panel"]) >= 4.5, `${ink} does not meet text contrast`);
     for (const surface of ["surface-page", "surface-panel", "surface-raised"]) assert.ok(contrast(tokens["border-control"], tokens[surface]) >= 3, `border-control does not meet non-text contrast on ${surface}`);
     await assertHeaderContract(page, false);
+    await assertSimplifiedWorkspace(page);
     await scan(page, "ready populated library");
     await page.evaluate(() => document.activeElement?.blur());
     await tabTo(page, ".skip-link");
@@ -406,7 +432,10 @@ async function waitImportOutcome(page) {
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.activeElement?.id === "detail-title");
     assert.match(await page.locator("#detail-title").textContent(), /Japan/);
-    assert.match(await japan.locator(".profile-state").textContent(), /Shown in details · Connected/);
+    assert.match(await japan.locator(".profile-state").textContent(), /Selected · Connected/);
+    assert.equal(await page.locator(".profile-summary .definition").count(), 3, "primary profile summary contains technical metadata");
+    assert.equal(await page.locator(".technical-details").getAttribute("open"), null, "technical details are expanded by default");
+    assert.match(await page.locator(".technical-details").textContent(), /Runtime identifier.*Original file.*Imported/s);
     assert.match(await page.locator("#protocol-details").textContent(), /198\.51\.100\.8:51820/);
     assert.match(await page.locator("#protocol-details").textContent(), /No handshake observed/);
     await page.locator("#detail-back").focus();
@@ -453,10 +482,10 @@ async function waitImportOutcome(page) {
 
     await tabTo(page, '[data-profile-id="tf_cccccccccccccccccccccccccc"]');
     await page.keyboard.press("Enter");
-    assert.match(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"] .profile-state').textContent(), /Shown in details/);
+    assert.match(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"] .profile-state').textContent(), /Selected/);
     assert.doesNotMatch(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"] .profile-state').textContent(), /Connected/);
     assert.match(await page.locator('[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"] .profile-state').textContent(), /Connected/);
-    assert.doesNotMatch(await page.locator('[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"] .profile-state').textContent(), /Shown in details/);
+    assert.doesNotMatch(await page.locator('[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"] .profile-state').textContent(), /Selected/);
     await scan(page, "inactive profile detail");
     await tabTo(page, '[data-detail-action="connect"]');
     assert.match(await page.locator('[data-detail-action="connect"]').textContent(), /Germany/);
