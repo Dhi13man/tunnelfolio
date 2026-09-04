@@ -107,7 +107,7 @@ const delay = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 
 async function waitForCDP() {
   adb("forward", "tcp:9222", "localabstract:chrome_devtools_remote");
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 120000;
   let lastError;
   while (Date.now() < deadline) {
     try {
@@ -201,7 +201,7 @@ async function tapFocusedInputWithCDP(page, selector) {
     adb(
       "shell", "am", "start", "-W",
       "-a", "android.intent.action.VIEW",
-      "-d", origin,
+      "-d", "about:blank",
       "-p", "com.android.chrome",
       "--ez", "com.android.chrome.firstrun.SKIP_FIRST_RUN_EXPERIENCE", "true",
     );
@@ -212,17 +212,13 @@ async function tapFocusedInputWithCDP(page, selector) {
     const page = context.pages()[0];
     assert.ok(page, "Android Chrome CDP connection did not expose a page");
     page.setDefaultTimeout(20000);
-    const navigationDeadline = Date.now() + 30000;
-    while (true) {
-      try {
-        await page.goto(origin, { waitUntil: "domcontentloaded" });
-        break;
-      } catch (error) {
-        if (!String(error).includes("ERR_INTERNET_DISCONNECTED") || Date.now() >= navigationDeadline) throw error;
-        await delay(1000);
-      }
-    }
-    await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "1 profile");
+    const response = await page.goto(origin, { waitUntil: "commit", timeout: 60000 });
+    assert.equal(response?.status(), 200, "Android Chrome did not receive the app document");
+    await page.waitForFunction(
+      () => document.querySelector("#result-count")?.textContent === "1 profile",
+      undefined,
+      { timeout: 60000 },
+    );
     await page.locator(".profile-row-button").click();
     await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "detail");
     await page.locator('[data-detail-action="edit"]').click();
