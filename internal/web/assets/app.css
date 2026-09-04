@@ -241,7 +241,7 @@ input[type="file"]::file-selector-button { min-block-size: 44px; margin-inline-e
 }
 
 @media (forced-colors: active) {
-  :root { --border-decorative: CanvasText; --border-control: ButtonText; }
+  :root { --border-decorative: CanvasText; --border-control: ButtonText; --text-primary: CanvasText; --text-secondary: CanvasText; }
   html, body, .site-header, .current-tunnel, .folio, .profile-library, .profile-detail, .profile-row-button, .page-message, .import-status, .dialog, .dialog-shell, .drop-target, .import-file, .empty-state, .local-message, .detail-status {
     background: Canvas;
     color: CanvasText;
