@@ -192,7 +192,9 @@ async function tapFocusedInputWithCDP(page, selector) {
     server.once("error", reject);
     server.listen(0, "0.0.0.0", resolve);
   });
-  const origin = `http://10.0.2.2:${server.address().port}`;
+  const port = server.address().port;
+  adb("reverse", `tcp:${port}`, `tcp:${port}`);
+  const origin = `http://127.0.0.1:${port}`;
   let browser;
   try {
     adb("shell", "settings", "put", "secure", "show_ime_with_hard_keyboard", "1");
