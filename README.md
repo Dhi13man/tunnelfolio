@@ -12,9 +12,22 @@ Import profiles, organize them into Groups, and connect or switch the host's sin
 > [!WARNING]
 > Tunnelfolio runs with root network authority. A profile can change the host's routes and DNS. Import only profiles you trust, keep the application on loopback, and put an authenticated same-host HTTPS proxy in front of mutable deployments.
 
-![Tunnelfolio Folio Desk interface with profile index, library, and selected-profile detail](docs/screenshots/folio-desk.png)
+![Light desktop library with country flags, protocol symbols and on-demand connection details](https://raw.githubusercontent.com/Dhi13man/tunnelfolio/9b4735f694d01f8d509728fbac0234e773893705/desktop-light-library.png)
 
-## What v0.1 includes
+The v0.2 interface, shown with synthetic profiles.
+
+<details>
+<summary>Mobile Favorites, selected-profile details and dark appearance</summary>
+
+<img src="https://raw.githubusercontent.com/Dhi13man/tunnelfolio/9b4735f694d01f8d509728fbac0234e773893705/mobile-light-favorites.png" alt="Mobile Favorites view with profile flags and collapsed connection details below host actions" width="390">
+
+![Selected-profile inspector with a shared flag and Close details](https://raw.githubusercontent.com/Dhi13man/tunnelfolio/9b4735f694d01f8d509728fbac0234e773893705/desktop-light-inspector.png)
+
+![Dark library with connection details expanded below the host summary](https://raw.githubusercontent.com/Dhi13man/tunnelfolio/9b4735f694d01f8d509728fbac0234e773893705/desktop-dark-connection-details.png)
+
+</details>
+
+## What v0.2 includes
 
 - Equal OpenVPN and WireGuard support behind one managed library.
 - Browser import for up to 100 self-contained `.ovpn` or `.conf` files per batch.
@@ -41,7 +54,11 @@ Only toolchains for protocols represented in the installed library are required.
 
 ## Installation
 
-Clone and build:
+Prebuilt archives for Linux amd64, arm64 and armv7 are available on
+[GitHub Releases](https://github.com/Dhi13man/tunnelfolio/releases). Follow the
+[release verification guide](docs/release-verification.md) before installing.
+
+To build from source:
 
 ```bash
 git clone https://github.com/Dhi13man/tunnelfolio.git
@@ -156,7 +173,7 @@ sudo ./install.sh check-disconnected
 
 ## Versioning
 
-Tunnelfolio follows [Semantic Versioning](https://semver.org/). The first public release is `v0.1.0`. Before `1.0.0`, MINOR releases may change documented public surfaces; PATCH releases remain backward-compatible bug fixes within the current MINOR release. Every release records its changes and any required migration in the changelog.
+Tunnelfolio follows [Semantic Versioning](https://semver.org/). Before `1.0.0`, MINOR releases may change documented public surfaces; PATCH releases remain backward-compatible bug fixes within the current MINOR release. Every release records its changes and any required migration in the [changelog](CHANGELOG.md).
 
 The public compatibility surfaces are documented command-line flags and behavior, the installer and systemd contract, user-visible persisted library and preferences with upgrade preservation, and the trusted-proxy header contract. The internal manifest schema and `/api/*` interface are private implementation details, not supported third-party APIs.
 
