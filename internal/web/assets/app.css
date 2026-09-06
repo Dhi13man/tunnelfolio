@@ -202,9 +202,9 @@ input[type="radio"], input[type="checkbox"] { inline-size: var(--size-icon); blo
 .profile-row:first-child .profile-row-button { border-start-start-radius: var(--radius-panel); border-start-end-radius: var(--radius-panel); }
 .profile-row:last-child .profile-row-button { border-end-start-radius: var(--radius-panel); border-end-end-radius: var(--radius-panel); }
 .profile-row-button[data-selected="true"] { border-inline-start-color: var(--action-fill); background: var(--row-selected); }
-.profile-symbol { min-inline-size: 0; inline-size: var(--size-icon-large); block-size: var(--size-icon); display: inline-flex; vertical-align: middle; align-items: center; justify-content: center; overflow: hidden; color: var(--text-secondary); }
+.profile-symbol { min-inline-size: 0; inline-size: 100%; block-size: var(--size-icon); display: inline-flex; vertical-align: middle; align-items: center; justify-content: center; overflow: hidden; color: var(--text-secondary); }
 .profile-emoji { min-inline-size: 0; overflow: hidden; white-space: nowrap; font-family: var(--font-emoji); font-size: var(--size-icon); font-weight: 400; line-height: 1; unicode-bidi: isolate; }
-.current-name-action .profile-symbol, .detail-title .profile-symbol { margin-inline-end: var(--space-2); }
+.current-name-action .profile-symbol, .detail-title .profile-symbol { inline-size: var(--size-icon-large); margin-inline-end: var(--space-2); }
 .profile-copy { min-inline-size: 0; display: grid; gap: 0; }
 .profile-name { min-inline-size: 0; overflow-wrap: anywhere; font-size: var(--size-text); font-weight: 650; }
 .profile-meta { color: var(--text-secondary); font-size: var(--size-small); overflow-wrap: anywhere; }

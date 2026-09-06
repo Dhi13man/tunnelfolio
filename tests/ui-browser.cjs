@@ -341,6 +341,9 @@ async function assertNoHorizontalOverflow(page, state) {
   const dimensions = await page.evaluate(() => ({
     width: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
+    symbolOverlaps: [...document.querySelectorAll(".profile-row-button")]
+      .filter(row => row.querySelector(".profile-symbol").getBoundingClientRect().right > row.querySelector(".profile-copy").getBoundingClientRect().left + 1)
+      .map(row => row.dataset.profileId),
     offenders: [...document.querySelectorAll("body *")]
       .filter(node => !node.matches(".sr-only"))
       .map(node => ({ selector: `${node.tagName.toLowerCase()}#${node.id}.${node.className}`, left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right, scroll: node.scrollWidth, width: node.clientWidth }))
@@ -348,6 +351,7 @@ async function assertNoHorizontalOverflow(page, state) {
       .slice(0, 10),
   }));
   assert.ok(dimensions.scroll <= dimensions.width + 1, `${state}: horizontal overflow ${dimensions.scroll} > ${dimensions.width}; ${JSON.stringify(dimensions.offenders)}`);
+  assert.deepEqual(dimensions.symbolOverlaps, [], `${state}: profile symbols overlap their names`);
   assert.deepEqual(dimensions.offenders, [], `${state}: clipped or horizontally overflowing descendants: ${JSON.stringify(dimensions.offenders)}`);
 }
 
