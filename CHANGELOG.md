@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-06
+
 ### Added
 
 - Optional profile emoji identifiers, editable without changing tunnel identity
@@ -25,6 +27,9 @@ All notable changes to this project are documented here. The format is based on
   import to Choose, Review and Done with explicit busy/background states.
 - Serve licensed Manrope and static Lucide icons locally; retain native controls
   and the existing same-origin asset policy.
+- Persist optional emoji metadata. Before downgrading to v0.1.0, clear emojis
+  through the UI or restore matching pre-upgrade state; older binaries reject
+  manifests containing emoji fields.
 
 ### Fixed
 
@@ -83,5 +88,6 @@ All notable changes to this project are documented here. The format is based on
   and `x/text` to v0.41.0 to clear pre-release security advisories.
 - Bump quic-go to v0.59.1 to address GO-2026-5676.
 
-[Unreleased]: https://github.com/Dhi13man/tunnelfolio/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Dhi13man/tunnelfolio/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Dhi13man/tunnelfolio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Dhi13man/tunnelfolio/releases/tag/v0.1.0
