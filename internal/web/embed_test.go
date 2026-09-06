@@ -25,14 +25,14 @@ func TestEmbeddedApplicationBoundary(t *testing.T) {
 	}
 
 	assets := map[string]string{
-		"app.css":            "text/css; charset=utf-8",
-		"api.js":             "text/javascript; charset=utf-8",
-		"app.js":             "text/javascript; charset=utf-8",
-		"connection.js":      "text/javascript; charset=utf-8",
-		"detail.js":          "text/javascript; charset=utf-8",
-		"import.js":          "text/javascript; charset=utf-8",
-		"library.js":         "text/javascript; charset=utf-8",
-		"state.js":           "text/javascript; charset=utf-8",
+		"app.css":             "text/css; charset=utf-8",
+		"api.js":              "text/javascript; charset=utf-8",
+		"app.js":              "text/javascript; charset=utf-8",
+		"connection.js":       "text/javascript; charset=utf-8",
+		"detail.js":           "text/javascript; charset=utf-8",
+		"import.js":           "text/javascript; charset=utf-8",
+		"library.js":          "text/javascript; charset=utf-8",
+		"state.js":            "text/javascript; charset=utf-8",
 		"manrope-latin.woff2": "font/woff2",
 		"Manrope-OFL.txt":     "text/plain; charset=utf-8",
 		"Lucide-LICENSE.txt":  "text/plain; charset=utf-8",
