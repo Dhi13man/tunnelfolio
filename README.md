@@ -19,8 +19,9 @@ Import profiles, organize them into Groups, and connect or switch the host's sin
 - Equal OpenVPN and WireGuard support behind one managed library.
 - Browser import for up to 100 self-contained `.ovpn` or `.conf` files per batch.
 - Strict inspection, duplicate detection, explicit trust confirmation, and all-or-none publication.
-- Stable profile identity with editable display name, Group, and optional location.
-- All, Favorites, and Recent views; search; Group, location, and protocol filters.
+- Stable profile identity with editable display name, Group, optional location and emoji.
+- Favorites, Recent, and All views, opening the first with saved profiles; search; Group, location, and protocol filters.
+- List-first layout with an on-demand inspector, disclosed filters and system light/dark appearance.
 - One-profile connect, same-protocol switch, cross-protocol switch, disconnect, and failed-target restoration.
 - Protocol-native status: OpenVPN process state and WireGuard interface, handshake, endpoint, and transfer evidence.
 - Manual startup by default, with opt-in restoration of the last desired profile.
@@ -102,12 +103,16 @@ The response contains `"live":true`, read-only state, readiness, and availabilit
 3. Choose one or more trusted `.ovpn` or `.conf` files.
 4. Review detected protocols, names, Groups, locations, duplicates, and policy findings.
 5. Confirm that you trust the files, then import them.
-6. Select each imported row and inspect its protocol, runtime name, source filename, and availability.
-7. Correct its display name, Group, or location and mark useful profiles as Favorites.
-8. Connect one known-good profile, then verify **Current tunnel**, protocol-native status, DNS, and outbound reachability.
+6. Select an imported row. Open **Technical details** for its runtime identifier and source filename.
+7. Use **More actions → Edit metadata** to correct its name, Group or location, or add an emoji; mark useful profiles as Favorites.
+8. Connect one known-good profile, then verify **Host tunnel**, protocol-native status, DNS, and outbound reachability.
 9. Exercise a switch and **Disconnect**. If a target fails, confirm the prior tunnel is restored or the interface reports the exact recovery failure.
 
 Import never connects a profile. Tunnelfolio preserves accepted source bytes and stores them under private managed state. It never renders configuration contents, keys, certificates, or content fingerprints in the browser.
+
+An optional emoji replaces a profile's tunnel icon in the library, selected-profile panel and host-tunnel heading. Paste it into **Edit metadata → Emoji**, or clear the field to restore the default icon. Emoji sequences support up to 16 Unicode code points and 64 UTF-8 bytes; the bundled color font loads locally when needed.
+
+Selecting a row or the host's profile name only opens details; it never connects. **Close details** on desktop and **Back to profiles** on narrow screens return to the selected row. **Connection details**, below the host summary, toggles transfer evidence and polling controls. Stale or unavailable observations remain visible when collapsed. In Settings, **Save settings** applies the Startup choice; Library maintenance clears Favorites or Recent separately without saving an unsaved Startup choice.
 
 ## Configuration
 
@@ -182,3 +187,5 @@ Report vulnerabilities through GitHub private vulnerability reporting as describ
 ## License
 
 Tunnelfolio is available under the [MIT License](LICENSE).
+
+The embedded UI includes [Manrope](internal/web/assets/Manrope-OFL.txt) and [Noto Color Emoji](internal/web/assets/NotoColorEmoji-OFL.txt) under SIL OFL 1.1, plus [Lucide/Feather icons under ISC/MIT](internal/web/assets/Lucide-LICENSE.txt), served locally without external asset requests.

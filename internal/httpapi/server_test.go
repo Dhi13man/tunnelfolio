@@ -207,7 +207,7 @@ func TestImportInspectCommitReplayAndSafeResponses(t *testing.T) {
 	if !inspection.CommitReady || inspection.Receipt == "" || len(inspection.InspectionRecords) != 1 {
 		t.Fatalf("inspection = %+v", inspection)
 	}
-	metadata := []byte(`{"0":{"display_name":"Office","group":"Work","location":"London"}}`)
+	metadata := []byte(`{"0":{"display_name":"Office","group":"Work","location":"London","emoji":"🇯🇵"}}`)
 	fields := map[string][]byte{
 		"inspection_records": mustJSON(t, inspection.InspectionRecords), "metadata": metadata,
 		"receipt": []byte(inspection.Receipt), "trust_profile_policy": []byte("true"),
@@ -222,8 +222,8 @@ func TestImportInspectCommitReplayAndSafeResponses(t *testing.T) {
 			t.Fatalf("commit response exposed %q: %s", forbidden, response.Body.String())
 		}
 	}
-	if len(fixture.store.List()) != 1 {
-		t.Fatalf("profiles after commit = %d", len(fixture.store.List()))
+	if stored := fixture.store.List(); len(stored) != 1 || stored[0].Emoji != "🇯🇵" || !strings.Contains(response.Body.String(), `"emoji":"🇯🇵"`) {
+		t.Fatalf("imported emoji missing: profiles=%+v response=%s", stored, response.Body.String())
 	}
 	replay := performMultipart(t, fixture.handler, "/api/profiles/import", "office.ovpn", profileBytes, fields)
 	if replay.Code != http.StatusOK || !strings.Contains(replay.Body.String(), `"replayed":true`) {
@@ -337,6 +337,78 @@ func TestMetadataPatchNullSemanticsAndRemovalGuard(t *testing.T) {
 	fixture.handler.ServeHTTP(response, remove)
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "profile_active") {
 		t.Fatalf("active removal = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestEmojiMetadataPatchTransitionsAndAtomicRejection(t *testing.T) {
+	fixture := newAPIFixture(t, false, true)
+	inspection := inspectProfile(t, fixture.handler, "office.ovpn", validAPIOpenVPN(), nil)
+	fields := map[string][]byte{
+		"inspection_records": mustJSON(t, inspection.InspectionRecords),
+		"metadata":           []byte(`{"0":{"display_name":"Office","group":"Work"}}`),
+		"receipt":            []byte(inspection.Receipt), "trust_profile_policy": []byte("true"),
+		"library_revision": []byte(strconv.FormatUint(inspection.LibraryRevision, 10)),
+	}
+	commit := performMultipart(t, fixture.handler, "/api/profiles/import", "office.ovpn", validAPIOpenVPN(), fields)
+	if commit.Code != http.StatusOK {
+		t.Fatalf("commit = %d %s", commit.Code, commit.Body.String())
+	}
+	id := fixture.store.List()[0].ID
+	want, err := fixture.store.Resolve(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		name   string
+		body   string
+		status int
+		emoji  string
+		field  bool
+	}{
+		{name: "set flag", body: `{"emoji":"🇯🇵"}`, status: http.StatusOK, emoji: "🇯🇵"},
+		{name: "omitted preserves", body: `{"display_name":"Office"}`, status: http.StatusOK, emoji: "🇯🇵"},
+		{name: "wrong type", body: `{"display_name":"Must not persist","emoji":42}`, status: http.StatusUnprocessableEntity, emoji: "🇯🇵"},
+		{name: "over length", body: `{"display_name":"Must not persist","emoji":"abcdefghijklmnopq"}`, status: http.StatusUnprocessableEntity, emoji: "🇯🇵", field: true},
+		{name: "control", body: `{"display_name":"Must not persist","emoji":"🚀\n🚀"}`, status: http.StatusUnprocessableEntity, emoji: "🇯🇵", field: true},
+		{name: "surrounding whitespace", body: `{"display_name":"Must not persist","emoji":" 🚀"}`, status: http.StatusUnprocessableEntity, emoji: "🇯🇵", field: true},
+		{name: "duplicate field", body: `{"emoji":"🚀","emoji":null}`, status: http.StatusBadRequest, emoji: "🇯🇵"},
+		{name: "set sequence", body: `{"emoji":"👩🏽‍💻"}`, status: http.StatusOK, emoji: "👩🏽‍💻"},
+		{name: "empty clears", body: `{"emoji":""}`, status: http.StatusOK},
+		{name: "reset flag", body: `{"emoji":"🇯🇵"}`, status: http.StatusOK, emoji: "🇯🇵"},
+		{name: "null clears", body: `{"emoji":null}`, status: http.StatusOK},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			revision := fixture.store.Snapshot().LibraryRevision
+			response := httptest.NewRecorder()
+			fixture.handler.ServeHTTP(response, authenticatedRequest(http.MethodPatch, "/api/profiles/"+id, strings.NewReader(step.body), "application/json"))
+			if response.Code != step.status {
+				t.Fatalf("patch = %d %s, want %d", response.Code, response.Body.String(), step.status)
+			}
+			if step.field && !strings.Contains(response.Body.String(), `"field":"emoji"`) {
+				t.Fatalf("emoji validation field missing: %s", response.Body.String())
+			}
+			if step.status == http.StatusOK {
+				revision++
+				var updated manager.ProfileView
+				if err := json.Unmarshal(response.Body.Bytes(), &updated); err != nil || updated.Emoji != step.emoji {
+					t.Fatalf("patch emoji = %q, %v; want %q", updated.Emoji, err, step.emoji)
+				}
+			}
+			want.Emoji = step.emoji
+			got, err := fixture.store.Resolve(id)
+			if err != nil || got != want || fixture.store.Snapshot().LibraryRevision != revision {
+				t.Fatalf("stored profile = %+v, %v; want %+v at revision %d", got, err, want, revision)
+			}
+			detail := httptest.NewRecorder()
+			fixture.handler.ServeHTTP(detail, authenticatedRequest(http.MethodGet, "/api/profiles/"+id, nil, ""))
+			var profile manager.ProfileDetail
+			if err := json.Unmarshal(detail.Body.Bytes(), &profile); err != nil || detail.Code != http.StatusOK || profile.Emoji != step.emoji {
+				t.Fatalf("detail emoji = %q, %v; response=%d %s", profile.Emoji, err, detail.Code, detail.Body.String())
+			}
+			if step.emoji == "" && strings.Contains(detail.Body.String(), `"emoji"`) {
+				t.Fatalf("cleared emoji was not omitted: %s", detail.Body.String())
+			}
+		})
 	}
 }
 

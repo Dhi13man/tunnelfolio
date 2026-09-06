@@ -96,10 +96,10 @@ function privateFile(file, contents) {
     assert.equal(await page.locator("#library-empty").isVisible(), true);
     assert.equal(await page.locator("#import-open").isDisabled(), false);
 
-    for (const asset of ["app.css", "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "state.js"]) {
+    for (const asset of ["app.css", "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "profile-symbol.js", "state.js", "manrope-latin.woff2", "noto-color-emoji.woff2", "Manrope-OFL.txt", "NotoColorEmoji-OFL.txt", "Lucide-LICENSE.txt"]) {
       const assetResponse = await page.request.get(`${origin}/assets/${asset}`);
       assert.equal(assetResponse.status(), 200);
-      assert.match(assetResponse.headers()["content-type"], asset.endsWith("css") ? /text\/css/ : /javascript/);
+      assert.match(assetResponse.headers()["content-type"], asset.endsWith(".woff2") ? /font\/woff2/ : asset.endsWith(".txt") ? /text\/plain/ : asset.endsWith(".css") ? /text\/css/ : /javascript/);
     }
     const unauthorized = await fetch(`${origin}/healthz`);
     assert.equal(unauthorized.status, 401);
@@ -132,12 +132,14 @@ function privateFile(file, contents) {
     assert.match(await page.locator(".profile-row-button").textContent(), /Office gateway/);
 
     await page.locator(".profile-row-button").click();
+    await page.locator(".more-actions > summary").click();
     await page.locator('[data-detail-action="edit"]').click();
     await page.locator("#edit-name").fill("Office primary");
     await page.locator("#edit-location").fill("Manchester");
     await page.locator('#edit-form button[type="submit"]').click();
     await page.waitForFunction(() => document.querySelector(".profile-row-button")?.textContent.includes("Office primary"));
     assert.match(await page.locator("#detail-content").textContent(), /Manchester/);
+    if (!(await page.locator(".more-actions").evaluate(node => node.open))) await page.locator(".more-actions > summary").click();
 
     await page.locator('[data-detail-action="remove"]').click();
     const removalResponsePromise = page.waitForResponse(response =>
@@ -161,6 +163,9 @@ function privateFile(file, contents) {
       `profile removal failed: ${await page.locator("#page-error-text").textContent()}`,
     );
     assert.equal(await page.locator(".profile-row-button").count(), 0);
+    assert.equal(await page.locator("#library-empty").isVisible(), true);
+    assert.equal(await page.locator("#profile-filters").isVisible(), false, "first-use state retained irrelevant filtering controls");
+    assert.equal(await page.locator("#library-empty").evaluate(node => node.contains(document.activeElement)), true, "last removal lost focus outside the first-use recovery");
     console.log("mutable browser/server boundary checks passed");
   } catch (error) {
     error.message += `\nserver diagnostics:\n${diagnostics}`;

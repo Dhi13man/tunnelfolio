@@ -15,6 +15,7 @@ type metadataPatchRequest struct {
 	DisplayName json.RawMessage `json:"display_name"`
 	Group       json.RawMessage `json:"group"`
 	Location    json.RawMessage `json:"location"`
+	Emoji       json.RawMessage `json:"emoji"`
 }
 
 var errMalformedMetadataPatch = errors.New("malformed metadata patch")
@@ -49,6 +50,18 @@ func decodeMetadataPatch(request *http.Request) (profiles.MetadataPatch, error) 
 				return profiles.MetadataPatch{}, err
 			}
 			patch.Location = &value
+		}
+		set++
+	}
+	if raw.Emoji != nil {
+		if bytes.Equal(bytes.TrimSpace(raw.Emoji), []byte("null")) {
+			patch.ClearEmoji = true
+		} else {
+			value, err := requiredString(raw.Emoji)
+			if err != nil {
+				return profiles.MetadataPatch{}, err
+			}
+			patch.Emoji = &value
 		}
 		set++
 	}

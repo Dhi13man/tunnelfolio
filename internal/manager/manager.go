@@ -29,6 +29,7 @@ type ProfileView struct {
 	DisplayName       string          `json:"display_name"`
 	Group             string          `json:"group"`
 	Location          string          `json:"location,omitempty"`
+	Emoji             string          `json:"emoji,omitempty"`
 	Identifier        string          `json:"identifier"`
 	OriginalFilename  string          `json:"original_filename"`
 	ImportedAt        string          `json:"imported_at"`
@@ -888,7 +889,7 @@ func runtimeProfileAt(profile profiles.Profile, path string) tunnel.Profile {
 func view(profile profiles.Profile, manifest profiles.Manifest, availability Availability, mutable bool) ProfileView {
 	return ProfileView{
 		ID: profile.ID, Protocol: profile.Protocol, DisplayName: profile.DisplayName, Group: profile.Group,
-		Location: profile.Location, Identifier: profile.Identifier, OriginalFilename: profile.OriginalFilename,
+		Location: profile.Location, Emoji: profile.Emoji, Identifier: profile.Identifier, OriginalFilename: profile.OriginalFilename,
 		ImportedAt: profile.ImportedAt.UTC().Format(time.RFC3339), Favorite: contains(manifest.Favorites, profile.ID),
 		Recent: contains(manifest.Recents, profile.ID), Available: availability.Available,
 		UnavailableReason: availability.Reason,

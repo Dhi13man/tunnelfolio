@@ -1,6 +1,7 @@
 "use strict";
 
-import { appState, isReadOnly } from "./state.js";
+import { appState, isReadOnly, profileByID } from "./state.js";
+import { createProfileSymbol, updateProfileSymbol } from "./profile-symbol.js";
 
 function protocolName(protocol) {
   return protocol === "wireguard" ? "WireGuard" : "OpenVPN";
@@ -8,10 +9,9 @@ function protocolName(protocol) {
 
 function rowState(profile) {
   const connected = appState.status?.connected && appState.status.profile?.id === profile.id;
-  const labels = [protocolName(profile.protocol)];
+  const labels = [];
   if (!profile.available) labels.push("Unavailable");
-  if (appState.selectedID === profile.id) labels.push("Selected");
-  if (connected) labels.push("Connected");
+  if (connected) labels.push(appState.statusStale || appState.status?.observation_available === false || appState.status?.lifecycle === "state_conflict" ? "Last known current" : "Current tunnel");
   return labels.join(" · ");
 }
 
@@ -36,6 +36,17 @@ function appendText(parent, className, text) {
   return span;
 }
 
+function icon(name, className) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", `icon ${className}`);
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#icon-${name}`);
+  svg.append(use);
+  return svg;
+}
+
 export function createLibraryController({ onSelect, onImport, onRetry }) {
   const main = document.querySelector("#main-content");
   const list = document.querySelector("#profile-list");
@@ -45,163 +56,202 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
   const protocol = document.querySelector("#protocol-filter");
   const search = document.querySelector("#profile-search");
   const views = [...document.querySelectorAll('input[name="profile-view"]')];
-  const skip = document.querySelector("#skip-profile-list");
   const firstUse = document.querySelector("#library-empty");
   const filteredEmpty = document.querySelector("#filtered-empty");
   const loadError = document.querySelector("#library-error");
   const importEmpty = document.querySelector("#empty-import");
-  const clearFilters = document.querySelector("#clear-filters");
-  const retry = document.querySelector("#library-retry");
+  const filters = document.querySelector("#profile-filters");
+  const toggle = document.querySelector("#filters-toggle");
+  const panel = document.querySelector("#filter-panel");
+  const chips = document.querySelector("#active-filters");
+  const context = document.querySelector("#library-context");
   let failed = false;
+  let viewInitialized = false;
+  let chipSignature = "";
 
-  function refreshGroups() {
-    const selected = appState.filters.group;
-    const groups = [...new Set(appState.profiles.map(profile => profile.group))]
+  function refreshFacet(select, key, label) {
+    const values = [...new Set(appState.profiles.map(profile => profile[key]).filter(Boolean))]
       .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
-    group.replaceChildren();
-    const all = document.createElement("option");
-    all.value = "";
-    all.textContent = "All groups";
-    group.append(all);
-    for (const value of groups) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      group.append(option);
+    const selected = appState.filters[key];
+    if (selected && !values.includes(selected)) values.push(selected);
+    const signature = JSON.stringify(values);
+    if (select.dataset.options !== signature) {
+      const options = [new Option(label, ""), ...values.map(value => new Option(key === "protocol" ? protocolName(value) : value, value))];
+      select.replaceChildren(...options);
+      select.dataset.options = signature;
     }
-    if (groups.includes(selected)) group.value = selected;
-    else {
-      appState.filters.group = "";
-      group.value = "";
-    }
+    select.value = selected;
+    document.querySelector(`#${key}-filter-field`).hidden = values.length === 0;
   }
 
-  function refreshLocations() {
-    const selected = appState.filters.location;
-    const locations = [...new Set(appState.profiles.map(profile => profile.location).filter(Boolean))]
-      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
-    location.replaceChildren();
-    const all = document.createElement("option");
-    all.value = "";
-    all.textContent = "All locations";
-    location.append(all);
-    for (const value of locations) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      location.append(option);
+  function renderChips() {
+    const entries = Object.entries(appState.filters).filter(([key, value]) => value && !(key === "view" && value === "all"));
+    const signature = JSON.stringify(entries);
+    const facetCount = entries.filter(([key]) => ["group", "location", "protocol"].includes(key)).length;
+    const label = toggle.querySelector("span");
+    if (label) label.textContent = facetCount ? `Filters (${facetCount})` : "Filters";
+    else toggle.textContent = facetCount ? `Filters (${facetCount})` : "Filters";
+    if (signature === chipSignature) return;
+    chipSignature = signature;
+    chips.replaceChildren();
+    for (const [key, value] of entries) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "filter-chip";
+      const text = key === "protocol" ? protocolName(value) : key === "view" ? (value === "favorites" ? "Favorites" : "Recent") : value;
+      button.append(document.createTextNode(`${key === "search" ? "Search" : key[0].toUpperCase() + key.slice(1)}: ${text}`), icon("close", ""));
+      button.setAttribute("aria-label", `Remove ${key === "search" ? "Search" : key[0].toUpperCase() + key.slice(1)}: ${text} filter`);
+      button.addEventListener("click", () => {
+        appState.filters[key] = key === "view" ? "all" : "";
+        render();
+        (chips.querySelector("button") || search).focus();
+      });
+      chips.append(button);
     }
-    location.hidden = locations.length === 0;
-    location.labels[0].hidden = locations.length === 0;
-    if (locations.includes(selected)) location.value = selected;
-    else {
-      appState.filters.location = "";
-      location.value = "";
-    }
+    chips.hidden = entries.length === 0;
   }
 
   function render() {
     main.setAttribute("aria-busy", "false");
+    document.querySelector("#library-loading").hidden = true;
     loadError.hidden = !failed;
-    if (failed) {
-      list.replaceChildren();
+    const anyProfiles = appState.profiles.length > 0;
+    filters.hidden = !anyProfiles;
+    document.querySelector("#import-open").classList.toggle("button-primary", !anyProfiles && !failed);
+    if (failed && !anyProfiles) {
+      list.hidden = true;
       count.textContent = "Library unavailable";
       firstUse.hidden = true;
       filteredEmpty.hidden = true;
+      context.hidden = true;
       return;
     }
-    refreshGroups();
-    refreshLocations();
+    refreshFacet(group, "group", "All groups");
+    refreshFacet(location, "location", "All locations");
+    refreshFacet(protocol, "protocol", "All protocols");
+    search.value = appState.filters.search;
+    views.forEach(input => { input.checked = input.value === appState.filters.view; });
+    renderChips();
     const profiles = appState.profiles.filter(matches);
-    list.replaceChildren();
-    for (const profile of profiles) {
-      const item = document.createElement("li");
-      item.className = "profile-row";
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "profile-row-button";
-      button.dataset.profileId = profile.id;
-      button.dataset.focusKey = `profile:${profile.id}`;
+    const shared = {};
+    for (const key of ["group", "location", "protocol"]) {
+      const value = profiles[0]?.[key];
+      if (value && profiles.every(profile => profile[key] === value)) shared[key] = value;
+    }
+    context.textContent = [shared.group, shared.location, shared.protocol && protocolName(shared.protocol)].filter(Boolean).join(" · ");
+    context.hidden = !context.textContent;
+    list.setAttribute("aria-describedby", "library-context");
+    const existing = new Map([...list.children].map(item => [item.firstElementChild.dataset.profileId, item]));
+    profiles.forEach((profile, index) => {
+      let item = existing.get(profile.id);
+      if (!item) {
+        item = document.createElement("li");
+        item.className = "profile-row";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "profile-row-button";
+        button.dataset.profileId = profile.id;
+        button.dataset.focusKey = `profile:${profile.id}`;
+        button.append(createProfileSymbol());
+        const copy = appendText(button, "profile-copy", "");
+        appendText(copy, "profile-name", "");
+        appendText(copy, "profile-meta", "");
+        button.append(icon("star", "profile-favorite"));
+        appendText(button, "profile-state", "");
+        button.addEventListener("click", () => onSelect(profileByID(button.dataset.profileId), button));
+        item.append(button);
+      }
+      const button = item.firstElementChild;
+      updateProfileSymbol(button.querySelector(".profile-symbol"), profile);
+      button.querySelector(".profile-name").textContent = profile.display_name;
+      const metadata = button.querySelector(".profile-meta");
+      metadata.textContent = [!shared.group && profile.group, !shared.location && profile.location, !shared.protocol && protocolName(profile.protocol)].filter(Boolean).join(" · ");
+      metadata.hidden = !metadata.textContent;
+      button.querySelector(".profile-favorite").toggleAttribute("hidden", !profile.favorite);
       button.dataset.selected = String(appState.selectedID === profile.id);
       if (appState.selectedID === profile.id) button.setAttribute("aria-current", "true");
-      button.dataset.connected = String(appState.status?.connected && appState.status.profile?.id === profile.id);
-      appendText(button, "profile-name", profile.display_name);
-      appendText(button, "profile-meta", [profile.group, profile.location].filter(Boolean).join(" · "));
-      appendText(button, "profile-state", rowState(profile));
-      button.addEventListener("click", () => {
-        appState.profileScroll = {
-          library: document.querySelector("#library-screen").scrollTop,
-          window: window.scrollY,
-        };
-        onSelect(profile, button);
-      });
-      item.append(button);
-      list.append(item);
-    }
-    const anyProfiles = appState.profiles.length > 0;
-    firstUse.hidden = anyProfiles;
+      else button.removeAttribute("aria-current");
+      if (list.children[index] !== item) list.insertBefore(item, list.children[index] || null);
+      existing.delete(profile.id);
+    });
+    existing.forEach(item => item.remove());
+    updateConnectionMarkers();
+    firstUse.hidden = anyProfiles || failed;
     filteredEmpty.hidden = !anyProfiles || profiles.length > 0;
     list.hidden = profiles.length === 0;
-    skip.hidden = !appState.selectedID || profiles.length === 0;
     count.textContent = `${profiles.length} ${profiles.length === 1 ? "profile" : "profiles"}`;
     importEmpty.disabled = isReadOnly();
   }
 
   function updateConnectionMarkers() {
+    const byID = new Map(appState.profiles.map(profile => [profile.id, profile]));
     for (const button of list.querySelectorAll(".profile-row-button")) {
-      const profile = appState.profiles.find(candidate => candidate.id === button.dataset.profileId);
+      const profile = byID.get(button.dataset.profileId);
       if (!profile) continue;
       const connected = appState.status?.connected && appState.status.profile?.id === profile.id;
-      button.dataset.connected = String(connected);
+      button.dataset.connected = String(connected && !appState.statusStale && appState.status?.observation_available !== false && appState.status?.lifecycle !== "state_conflict");
       const state = button.querySelector(".profile-state");
-      if (state) state.textContent = rowState(profile);
+      state.textContent = rowState(profile);
+      state.hidden = !state.textContent;
+      button.setAttribute("aria-label", [profile.display_name, protocolName(profile.protocol), profile.favorite && "Favorite", appState.selectedID === profile.id && "Selected", rowState(profile)].filter(Boolean).join(" · "));
     }
   }
 
   function restoreSelectedRow({ focus = true } = {}) {
-    main.dataset.screen = "library";
     const button = list.querySelector(`[data-profile-id="${CSS.escape(appState.selectedID)}"]`);
-    if (button && focus) button.focus({ preventScroll: true });
+    const target = button || (!list.hidden && list.firstElementChild?.firstElementChild) || document.querySelector(failed && !appState.profiles.length ? "#library-error-title" : appState.profiles.length ? "#filtered-empty-title" : "#library-empty-title") || search;
     const saved = appState.profileScroll || { library: 0, window: 0 };
-    const restoreScroll = () => {
-      document.querySelector("#library-screen").scrollTop = saved.library || 0;
-      window.scrollTo({ top: saved.window || 0, behavior: "instant" });
-    };
-    restoreScroll();
-    requestAnimationFrame(restoreScroll);
+    document.querySelector("#library-screen").scrollTop = saved.library || 0;
+    window.scrollTo({ top: saved.window || 0, behavior: "instant" });
+    if (focus) {
+      target.focus({ preventScroll: true });
+      const bounds = target.getBoundingClientRect();
+      if (bounds.top < 0 || bounds.bottom > window.innerHeight) target.scrollIntoView({ block: "nearest", behavior: "instant" });
+    }
   }
 
   function clearAllFilters() {
     appState.filters = { view: "all", group: "", location: "", protocol: "", search: "" };
-    views.find(input => input.value === "all").checked = true;
-    group.value = "";
-    location.value = "";
-    protocol.value = "";
-    search.value = "";
+    viewInitialized = true;
     render();
     search.focus();
   }
 
+  toggle.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  });
   views.forEach(input => input.addEventListener("change", () => {
     if (!input.checked) return;
+    viewInitialized = true;
     appState.filters.view = input.value;
     render();
   }));
+  views.forEach(input => input.addEventListener("click", () => { viewInitialized = true; }));
   group.addEventListener("change", () => { appState.filters.group = group.value; render(); });
   location.addEventListener("change", () => { appState.filters.location = location.value; render(); });
   protocol.addEventListener("change", () => { appState.filters.protocol = protocol.value; render(); });
   search.addEventListener("input", () => { appState.filters.search = search.value; render(); });
-  document.querySelector("#profile-filters").addEventListener("submit", event => event.preventDefault());
+  filters.addEventListener("submit", event => event.preventDefault());
   importEmpty.addEventListener("click", event => onImport(event.currentTarget));
-  clearFilters.addEventListener("click", clearAllFilters);
-  retry.addEventListener("click", onRetry);
+  document.querySelector("#clear-filters").addEventListener("click", clearAllFilters);
+  document.querySelector("#reset-filters").addEventListener("click", clearAllFilters);
+  document.querySelector("#library-retry").addEventListener("click", onRetry);
 
   return {
     render,
     updateConnectionMarkers,
     restoreSelectedRow,
     visibleProfileIDs: () => appState.profiles.filter(matches).map(profile => profile.id),
-    fail: value => { failed = value; render(); },
+    fail: value => {
+      failed = value;
+      if (!failed && !viewInitialized) {
+        appState.filters.view = appState.profiles.some(profile => profile.favorite) ? "favorites"
+          : appState.profiles.some(profile => profile.recent) ? "recent" : "all";
+        viewInitialized = true;
+      }
+      render();
+    },
     row: id => list.querySelector(`[data-profile-id="${CSS.escape(id)}"]`),
   };
 }

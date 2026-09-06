@@ -252,10 +252,9 @@ jobs:
         with:
           args: >-
             --no-progress
-            --root-dir .
+            --root-dir internal/web
             --exclude-path CHANGELOG.md
             --exclude 'https://github.com/Dhi13man/tunnelfolio/actions/workflows/.*'
-            --exclude 'file://.*/assets/(app.css|app.js)'
             './**/*.md'
             './**/*.html'
 

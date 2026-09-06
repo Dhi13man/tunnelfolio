@@ -4,7 +4,7 @@ import { APIError, api } from "./api.js";
 import { appState, isReadOnly } from "./state.js";
 
 const panels = ["choose", "inspect", "review", "outcome"];
-const steps = ["choose", "inspect", "review", "import"];
+const steps = ["choose", "review", "outcome"];
 
 function field(labelText, id, value, maximum, optional = false) {
   const wrapper = document.createElement("div");
@@ -71,6 +71,8 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
   const inspectAgain = document.querySelector("#inspect-again");
   const commitButton = document.querySelector("#commit-import");
   const reviewList = document.querySelector("#import-review-list");
+  const reviewSummary = document.querySelector("#import-review-summary");
+  const backgroundHint = document.querySelector("#import-background-hint");
   const batchGroup = document.querySelector("#batch-group");
   const trust = document.querySelector("#trust-profiles");
   const errors = document.querySelector("#import-errors");
@@ -99,8 +101,12 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     opener.disabled = isReadOnly() || busy;
   }
 
-  function showPanel(next, step = next) {
-    phase = next;
+  function showPanel(next, state = next) {
+    phase = state;
+    dialog.dataset.step = state;
+    const step = state === "inspect" ? "choose" : state === "import" ? "review" : state;
+    backgroundHint.hidden = state !== "import";
+    close.textContent = state === "import" ? "Continue in background" : "Close";
     for (const name of panels) document.querySelector(`#import-${name}-panel`).hidden = name !== next;
     for (const name of steps) {
       const item = document.querySelector(`#import-step-${name}`);
@@ -144,6 +150,8 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
       });
       item.append(link);
       const target = document.getElementById(targetID);
+      const disclosure = target?.closest("details");
+      if (disclosure) disclosure.open = true;
       if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.matches("summary"))) {
         const errorID = `${targetID}-error`;
         let fieldMessage = document.getElementById(errorID);
@@ -171,6 +179,7 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
   }
 
   function reset() {
+    controller?.abort();
     files = [];
     overrides = {};
     inspection = null;
@@ -184,6 +193,7 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     batchGroup.value = "Unsorted";
     trust.checked = false;
     reviewList.replaceChildren();
+    reviewSummary.textContent = "";
     discardNotice.hidden = true;
     clearErrors();
     showPanel("choose");
@@ -222,6 +232,7 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
   }
 
   async function inspect() {
+    if (committing || controller || isReadOnly()) return;
     if (!localEnvelopeValid()) {
       focusErrors();
       return;
@@ -230,25 +241,32 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     clearErrors();
     showPanel("inspect");
     setImportBusy(true);
-    controller = new AbortController();
+    const requestController = new AbortController();
+    controller = requestController;
+    cancelInspection.focus();
     try {
-      inspection = await api.inspect(files, overrides, controller.signal);
+      const result = await api.inspect(files, overrides, requestController.signal);
+      if (controller !== requestController) return;
+      inspection = result;
       renderReview();
       showPanel("review");
-      document.querySelector("#import-review-title").focus?.();
+      if (discardNotice.hidden) document.querySelector("#import-review-title").focus();
     } catch (error) {
+      if (controller !== requestController) return;
       if (error.name === "AbortError") {
         showPanel("choose");
-        inspectButton.focus();
+        if (discardNotice.hidden) inspectButton.focus();
         document.querySelector("#status-announcer").textContent = "Profile inspection cancelled";
       } else {
         showPanel("choose");
-        addError(error.message);
-        focusErrors();
+        addError(`Profile inspection failed: ${error.message} Inspect the selected files again.`);
+        if (discardNotice.hidden) focusErrors();
       }
     } finally {
-      controller = null;
-      setImportBusy(false);
+      if (controller === requestController) {
+        controller = null;
+        setImportBusy(false);
+      }
     }
   }
 
@@ -256,7 +274,11 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     reviewList.replaceChildren();
     clearErrors();
     const suggestions = new Map((inspection.suggestions || []).map(value => [value.ordinal, value]));
-    for (const record of inspection.inspection_records || []) {
+    const records = inspection.inspection_records || [];
+    let newCount = 0;
+    let existingCount = 0;
+    let problemCount = 0;
+    for (const record of records) {
       const ordinal = record.ordinal;
       const suggestion = suggestions.get(ordinal) || { display_name: files[ordinal]?.name || `Profile ${ordinal + 1}`, group: "Unsorted", location: "" };
       const draft = metadataDraft.get(ordinal) || suggestion;
@@ -264,11 +286,16 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
       const details = document.createElement("details");
       details.className = "import-file";
       details.id = `import-file-${ordinal}`;
-      details.open = (record.issues || []).length > 0 || !record.protocol;
+      const hasProblem = (record.issues || []).length > 0 || !record.protocol;
+      details.open = hasProblem;
+      if (hasProblem) problemCount += 1;
+      else if (record.disposition === "already_imported") existingCount += 1;
+      else if (record.disposition === "new") newCount += 1;
       const summary = document.createElement("summary");
       summary.id = `import-file-summary-${ordinal}`;
-      const disposition = record.disposition === "already_imported" ? "already in library" : record.protocol || "protocol needed";
-      summary.textContent = `${ordinal + 1}. ${files[ordinal]?.name || "Profile"} · ${disposition}`;
+      const disposition = hasProblem ? "needs attention" : record.disposition === "already_imported" ? "already present or duplicate" : "new profile";
+      const protocol = record.protocol === "wireguard" ? "WireGuard" : record.protocol === "openvpn" ? "OpenVPN" : "protocol needed";
+      summary.textContent = `${ordinal + 1}. ${files[ordinal]?.name || "Profile"} · ${disposition} · ${protocol}`;
       details.append(summary);
       const fields = document.createElement("div");
       fields.className = "import-file-fields";
@@ -306,7 +333,8 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
         fields.append(issues);
       }
     }
-    const count = inspection.inspection_records?.length || 0;
+    const count = records.length;
+    reviewSummary.textContent = `${count} ${count === 1 ? "file" : "files"} reviewed · ${newCount} new · ${existingCount} already present or duplicate · ${problemCount} ${problemCount === 1 ? "needs" : "need"} attention. ${inspection.commit_ready ? "Nothing is imported until you confirm." : "Nothing will be imported until the whole batch passes inspection."}`;
     commitButton.textContent = `Import ${count} ${count === 1 ? "profile" : "profiles"}`;
     commitButton.disabled = !inspection.commit_ready;
     if (!inspection.commit_ready && errors.hidden) addError("Correct the profile review and inspect the files again.");
@@ -332,28 +360,33 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     return document;
   }
 
-  async function lostResponse(error) {
-    if (error instanceof APIError) return false;
-    const newIDs = (inspection.inspection_records || []).filter(record => record.disposition === "new").map(record => record.id);
+  async function reconcileOutcome(error) {
+    if (error instanceof APIError && error.code !== "outcome_ambiguous") return false;
+    const records = inspection.inspection_records || [];
+    const newIDs = records.filter(record => record.disposition === "new").map(record => record.id);
+    const reason = error instanceof APIError ? "The server reported an uncertain import result" : "The import response was lost";
     if (!newIDs.length) {
-      settleSuccess("These profiles were already present in the library. The lost response did not leave a new publication to resolve.");
+      settleSuccess(`${records.length} already in the library. There was no new publication to resolve. No profile was connected.`);
       return true;
     }
     const present = await reconcileImport(newIDs);
     if (present === newIDs.length) {
-      settleSuccess(`Imported ${newIDs.length} ${newIDs.length === 1 ? "profile" : "profiles"}. The library confirmed the result after the response was lost.`);
+      const existing = records.length - newIDs.length;
+      settleSuccess(`Imported ${newIDs.length} ${newIDs.length === 1 ? "profile" : "profiles"}${existing ? ` · ${existing} already present or duplicate` : ""}. The library confirmed the result after an uncertain response. No profile was connected.`);
       return true;
     }
     if (present === 0) {
-      addError("The import response was lost, but none of the proposed profiles is present. Review and retry the same batch.");
+      const message = `${reason}, but none of the proposed profiles is present. Review and retry the same batch.`;
+      addError(message);
       showPanel("review");
       setImportBusy(false);
-      focusErrors();
+      setPageStatus(message, !dialog.open, true);
+      if (dialog.open) focusErrors();
       return true;
     }
     setImportBusy(true);
     if (dialog.open) dialog.close("unknown");
-    setPageStatus("The import response was lost and the library contains only part of the proposed batch. Do not retry. Inspect the host audit log before changing the library again.", true, true);
+    setPageStatus(`${reason} and the library contains only part of the proposed batch. Do not retry. Inspect the host audit log before changing the library again.`, true, true);
     return true;
   }
 
@@ -362,17 +395,25 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     setImportBusy(false);
     outcomeTitle.textContent = "Import complete";
     outcomeText.textContent = message;
-    showPanel("outcome", "import");
+    showPanel("outcome");
     setPageStatus(message, !dialog.open, true);
     if (dialog.open) outcomeTitle.focus();
   }
 
   function finishCommitAttempt() {
     committing = false;
+    backgroundHint.hidden = true;
+    close.textContent = "Close";
+    for (const input of reviewList.querySelectorAll("input, select")) input.disabled = false;
+    batchGroup.disabled = false;
+    trust.disabled = false;
+    inspectAgain.disabled = false;
     setButtonBusy(commitButton, false, `Import ${files.length} ${files.length === 1 ? "profile" : "profiles"}`);
+    commitButton.disabled = appState.importBusy || !inspection?.commit_ready;
   }
 
   async function commit() {
+    if (committing || appState.importBusy || isReadOnly() || phase !== "review") return;
     if (!inspection?.commit_ready || !validateMetadata()) {
       focusErrors();
       return;
@@ -382,24 +423,31 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     clearErrors();
     showPanel("review", "import");
     setButtonBusy(commitButton, true, "Import profiles");
+    for (const input of reviewList.querySelectorAll("input, select")) input.disabled = true;
+    batchGroup.disabled = true;
+    trust.disabled = true;
+    inspectAgain.disabled = true;
+    close.focus();
     setPageStatus(`Importing ${files.length} ${files.length === 1 ? "profile" : "profiles"}…`);
     let result;
     try {
       result = await api.commitImport({ files, overrides, inspection, metadata: metadataDocument() });
     } catch (error) {
       try {
-        if (await lostResponse(error)) {
+        if (await reconcileOutcome(error)) {
           finishCommitAttempt();
           return;
         }
       } catch (reconcileError) {
         setImportBusy(true);
         if (dialog.open) dialog.close("unknown");
-        setPageStatus("The import response was lost and the library could not be reconciled. Do not retry until the host audit log is checked.", true, true);
+        setPageStatus("The import outcome is uncertain and the library could not be reconciled. Do not retry until the host audit log is checked.", true, true);
         finishCommitAttempt();
         return;
       }
       showPanel("review");
+      const needsInspection = error instanceof APIError && ["stale_inspection", "inspection_expired", "invalid_receipt"].includes(error.code);
+      if (needsInspection) inspection.commit_ready = false;
       if (error instanceof APIError && error.code === "invalid_metadata" && error.details.length) {
         for (const detail of error.details) {
           const fieldName = detail.field === "display_name" ? "name" : detail.field;
@@ -407,10 +455,10 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
             ? `import-${fieldName}-${detail.file}` : "";
           addError(`${files[detail.file]?.name || "Profile"}: ${metadataServerMessage(detail)}`, target);
         }
-      } else addError(error.message);
+      } else addError(`Import failed: ${error.message}`, needsInspection ? inspectAgain.id : "");
       setImportBusy(false);
       if (dialog.open) focusErrors();
-      else setPageStatus(`Import failed: ${error.message} Reopen the import to review and retry.`, true, true);
+      else setPageStatus(`Import failed: ${error.message} Reopen the import to ${needsInspection ? "inspect the files again" : "review and retry"}.`, true, true);
       finishCommitAttempt();
       return;
     }
@@ -439,7 +487,7 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     }
     if (files.length && !settled) {
       discardNotice.hidden = false;
-      discardImport.focus();
+      keepImport.focus();
       return;
     }
     dialog.close("close");
@@ -449,6 +497,7 @@ export function createImportController({ onLibraryChanged, reconcileImport, onFi
     if (isReadOnly() || appState.importBusy) return;
     if (source instanceof HTMLElement) returnTarget = source;
     if (!dialog.open) dialog.showModal();
+    if (phase === "choose") showPanel("choose");
     title.focus();
   }
 

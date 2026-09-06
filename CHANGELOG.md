@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Optional profile emoji identifiers, editable without changing tunnel identity
+  or connection state; library rows and both profile panels share the symbol,
+  and clearing the emoji restores the protocol icon.
+- Locally served Noto Color Emoji for country flags and multi-code-point emoji.
+
+### Changed
+
+- Replace the text-heavy workspace with graphite-and-copper light/dark styling,
+  a compact host-status card, list-first navigation and an on-demand inspector.
+- Order views Favorites, Recent, All and initially open Favorites when populated,
+  otherwise Recent when populated, otherwise All; preserve manual view changes.
+- Place collapsible connection details below the host summary. Remove the
+  redundant list-skip control and return directly to the selected row.
+- Disclose advanced filters, technical details and profile maintenance; simplify
+  import to Choose, Review and Done with explicit busy/background states.
+- Serve licensed Manrope and static Lucide icons locally; retain native controls
+  and the existing same-origin asset policy.
+
+### Fixed
+
+- Make stale observations override healthy styling and distinguish read-only
+  authority from observation failures.
+- Reconcile coded ambiguous import outcomes before permitting another import.
+- Preserve visible selection after filtered removal, focused headings on narrow
+  screens and pending mutation errors after leaving the inspector.
+- Keep unsaved Startup choices separate from library-maintenance actions.
+
 ## [0.1.0] - 2026-09-04
 
 ### Added

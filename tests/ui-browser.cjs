@@ -27,10 +27,12 @@ let statusFailure = false;
 let preferenceFailure = false;
 let metadataFailure = false;
 let removalFailure = false;
+let connectGate = null;
 let inspectGate = null;
 let inspectScenario = "ready";
 let commitScenario = "ready";
 let commitGate = null;
+let importPosts = 0;
 let lastInspectionRecords = [];
 let inspectionSequence = 0;
 let preferences = { favorites: [], recents: [], startup_mode: "manual" };
@@ -86,14 +88,60 @@ function stableID(index) {
   return `tf_${"a".repeat(26 - encoded.length)}${encoded}`;
 }
 
-function contrast(left, right) {
-  const luminance = hex => {
-    const channels = hex.match(/[0-9a-f]{2}/gi).map(value => Number.parseInt(value, 16) / 255);
-    const linear = channels.map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
-    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-  };
-  const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
-  return (values[0] + 0.05) / (values[1] + 0.05);
+async function assertResolvedContrast(page, state) {
+  const samples = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const rgba = color => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    };
+    const over = (foreground, background) => foreground.slice(0, 3).map((value, index) => value * foreground[3] / 255 + background[index] * (1 - foreground[3] / 255));
+    const background = node => {
+      const ancestors = [];
+      for (let current = node; current; current = current.parentElement) ancestors.unshift(current);
+      return ancestors.reduce((color, current) => over(rgba(getComputedStyle(current).backgroundColor), color), [255, 255, 255]);
+    };
+    const luminance = channels => channels.map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const ratio = (left, right) => (Math.max(luminance(left), luminance(right)) + 0.05) / (Math.min(luminance(left), luminance(right)) + 0.05);
+    const text = [...document.querySelectorAll("#current-title, #current-state, #current-freshness, .profile-name, .profile-meta, #library-context, button, label, dialog[open] p")]
+      .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden" && !node.matches(":disabled") && node.textContent.trim())
+      .map(node => {
+        const style = getComputedStyle(node);
+        const surface = background(node);
+        const large = parseFloat(style.fontSize) >= 24 || (parseFloat(style.fontSize) >= 18.66 && parseInt(style.fontWeight, 10) >= 700);
+        return { name: node.id || node.className || node.tagName, ratio: ratio(over(rgba(style.color), surface), surface), minimum: large ? 3 : 4.5 };
+      });
+    const controls = [...document.querySelectorAll("input[type=search], input[type=text], select")]
+      .filter(node => node.getClientRects().length && !node.disabled)
+      .map(node => {
+        const style = getComputedStyle(node);
+        const inside = background(node);
+        const outside = background(node.parentElement);
+        const border = over(rgba(style.borderTopColor), inside);
+        const borderRatio = parseFloat(style.borderTopWidth) > 0 && style.borderTopStyle !== "none" ? Math.min(ratio(border, inside), ratio(border, outside)) : 1;
+        return { name: node.id, ratio: Math.max(borderRatio, ratio(inside, outside)) };
+      });
+    const focused = document.activeElement;
+    const style = focused?.matches(":focus-visible") ? getComputedStyle(focused) : null;
+    const surface = style ? background(focused.parentElement) : null;
+    const focus = style ? {
+      name: focused.id || focused.tagName,
+      width: parseFloat(style.outlineWidth),
+      style: style.outlineStyle,
+      ratio: ratio(over(rgba(style.outlineColor), surface), surface),
+    } : null;
+    return { text, controls, focus };
+  });
+  for (const sample of samples.text) assert.ok(sample.ratio >= sample.minimum, `${state}: ${sample.name} resolved text contrast ${sample.ratio.toFixed(2)} < ${sample.minimum}`);
+  for (const sample of samples.controls) assert.ok(sample.ratio >= 3, `${state}: ${sample.name} resolved control boundary contrast ${sample.ratio.toFixed(2)} < 3`);
+  if (samples.focus) {
+    assert.ok(samples.focus.width >= 2 && samples.focus.style !== "none", `${state}: ${samples.focus.name} lacks the 2px focus indicator`);
+    assert.ok(samples.focus.ratio >= 3, `${state}: ${samples.focus.name} resolved focus contrast ${samples.focus.ratio.toFixed(2)} < 3`);
+  }
 }
 
 function deferred() {
@@ -142,6 +190,7 @@ async function handleAPI(request, response, url) {
     const body = JSON.parse((await readBody(request)).toString("utf8"));
     const selected = profiles.find(item => item.id === body.profile);
     if (selected?.display_name === hostileName) return json(response, 503, { code: "transition_failed", error: "The tunnel transition failed. The current state has been reconciled where possible." });
+    if (connectGate) await connectGate.promise;
     status = { ...status, connected: true, lifecycle: "active", profile: selected, protocol_status: selected.protocol === "wireguard" ? status.protocol_status : { state: "active" } };
     preferences = { ...preferences, recents: [selected.id, ...preferences.recents.filter(id => id !== selected.id)].slice(0, 5) };
     profiles = profiles.map(item => ({ ...item, recent: preferences.recents.includes(item.id) }));
@@ -178,13 +227,22 @@ async function handleAPI(request, response, url) {
     });
   }
   if (url.pathname === "/api/profiles/import" && request.method === "POST") {
+    importPosts += 1;
     await readBody(request);
     if (commitScenario === "known-failure") return json(response, 422, { code: "import_rejected", error: "The reviewed import is no longer valid." });
     if (commitScenario === "metadata-failure") return json(response, 422, { code: "invalid_metadata", error: "Profile metadata is invalid.", details: [{ file: 0, field: "group", code: "length_limit" }] });
-    if (commitScenario === "delayed") await commitGate.promise;
+    if (commitScenario === "stale_inspection") return json(response, 409, { code: "stale_inspection", error: "The library changed. Inspect the files again." });
+    if (commitGate) await commitGate.promise;
     const importedProfiles = lastInspectionRecords
       .filter(record => record.disposition === "new")
       .map(record => profile(record.id, record.protocol || "openvpn", lastInspectionRecords.length === 1 ? "Imported office" : `Imported profile ${record.ordinal + 1}`, "Unsorted", "", false));
+    if (commitScenario.startsWith("coded-")) {
+      // Backend server.go returns this envelope when publication cannot be proved.
+      const published = commitScenario === "coded-all" ? importedProfiles : commitScenario === "coded-partial" ? importedProfiles.slice(0, 1) : [];
+      for (const imported of published) if (!profiles.some(item => item.id === imported.id)) profiles.push(imported);
+      if (commitScenario === "coded-reconcile-failure") profileFailure = true;
+      return json(response, commitScenario === "coded-reconcile-failure" ? 503 : 500, { code: "outcome_ambiguous", error: commitScenario === "coded-reconcile-failure" ? "The durable outcome is unknown. Refresh the library before retrying." : "The import result could not be reconciled." });
+    }
     if (commitScenario === "lost-partial" && importedProfiles[0] && !profiles.some(item => item.id === importedProfiles[0].id)) profiles.push(importedProfiles[0]);
     if (commitScenario === "lost-none" || commitScenario === "lost-partial") {
       request.socket.destroy();
@@ -201,7 +259,8 @@ async function handleAPI(request, response, url) {
     const id = decodeURIComponent(match[1]);
     const patch = JSON.parse((await readBody(request)).toString("utf8"));
     const index = profiles.findIndex(item => item.id === id);
-    profiles[index] = { ...profiles[index], display_name: patch.display_name, group: patch.group, location: patch.location || "" };
+    profiles[index] = { ...profiles[index], display_name: patch.display_name, group: patch.group, location: patch.location || "", emoji: Object.hasOwn(patch, "emoji") ? patch.emoji || "" : profiles[index].emoji };
+    if (status.profile?.id === id) status = { ...status, profile: profiles[index] };
     return json(response, 200, profiles[index]);
   }
   if (match && request.method === "DELETE") {
@@ -228,7 +287,7 @@ function createServer() {
         response.writeHead(404);
         return response.end();
       }
-      const contentType = file.endsWith(".css") ? "text/css; charset=utf-8" : file.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8";
+      const contentType = file.endsWith(".woff2") ? "font/woff2" : file.endsWith(".txt") ? "text/plain; charset=utf-8" : file.endsWith(".css") ? "text/css; charset=utf-8" : file.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8";
       response.writeHead(200, {
         "Content-Type": contentType,
         "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -240,18 +299,19 @@ function createServer() {
   });
 }
 
-async function scan(page, state) {
+async function scanAppearance(page, state, { fullPage = true } = {}) {
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
   assert.deepEqual(result.violations, [], `${state}: ${result.violations.map(item => `${item.id} (${item.nodes.length})`).join(", ")}`);
+  await assertResolvedContrast(page, state);
   const openDialog = page.locator("dialog[open]");
   if (await openDialog.count()) {
     const dialogTree = await openDialog.first().ariaSnapshot();
     assert.match(dialogTree, /dialog|heading/, `${state}: active dialog accessibility tree lost its role or heading`);
   } else {
     const currentTree = await page.locator("#current-tunnel").ariaSnapshot();
-    assert.match(currentTree, /heading "Current tunnel"/, `${state}: current-tunnel accessibility tree lost its static heading`);
+    assert.match(currentTree, /heading "Host tunnel"/, `${state}: host status lost its named heading`);
   }
   if (artifactDir) {
     artifactSequence += 1;
@@ -261,99 +321,78 @@ async function scan(page, state) {
     const media = await page.evaluate(() => ({
       forced_colors: matchMedia("(forced-colors: active)").matches,
       reduced_motion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      appearance: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
     }));
-    await page.screenshot({ path: path.join(artifactDir, filename), fullPage: true });
+    await page.screenshot({ path: path.join(artifactDir, filename), fullPage });
     artifactManifest.push({ state, file: filename, viewport, ...media });
   }
 }
 
-async function assertNoHorizontalOverflow(page, state) {
-  const hiddenRecipes = await page.locator(".sr-only").evaluateAll(nodes => nodes.map(node => {
-    const style = getComputedStyle(node);
-    return { position: style.position, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height, overflow: style.overflow, clipPath: style.clipPath, whiteSpace: style.whiteSpace };
-  }));
-  assert.ok(hiddenRecipes.length > 0, `${state}: no visually hidden status nodes were present`);
-  for (const recipe of hiddenRecipes) {
-    assert.ok(recipe.position === "absolute" && recipe.width <= 1 && recipe.height <= 1 && recipe.overflow === "hidden" && recipe.clipPath !== "none" && recipe.whiteSpace === "nowrap", `${state}: incomplete visually hidden recipe ${JSON.stringify(recipe)}`);
+async function scan(page, state) {
+  const original = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  for (const colorScheme of ["dark", "light"]) {
+    await page.emulateMedia({ colorScheme });
+    await scanAppearance(page, `${state} ${colorScheme}`);
   }
+  await page.emulateMedia({ colorScheme: original });
+}
+
+async function assertNoHorizontalOverflow(page, state) {
   const dimensions = await page.evaluate(() => ({
     width: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
+    symbolOverlaps: [...document.querySelectorAll(".profile-row-button")]
+      .filter(row => row.querySelector(".profile-symbol").getBoundingClientRect().right > row.querySelector(".profile-copy").getBoundingClientRect().left + 1)
+      .map(row => row.dataset.profileId),
     offenders: [...document.querySelectorAll("body *")]
       .filter(node => !node.matches(".sr-only"))
       .map(node => ({ selector: `${node.tagName.toLowerCase()}#${node.id}.${node.className}`, left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right, scroll: node.scrollWidth, width: node.clientWidth }))
-      .filter(node => node.right > document.documentElement.clientWidth + 1 || node.left < -1 || node.scroll > node.width + 1)
+      .filter(node => node.right > document.documentElement.clientWidth + 1 || node.left < -1 || (node.width > 0 && node.scroll > node.width + 1))
       .slice(0, 10),
   }));
   assert.ok(dimensions.scroll <= dimensions.width + 1, `${state}: horizontal overflow ${dimensions.scroll} > ${dimensions.width}; ${JSON.stringify(dimensions.offenders)}`);
+  assert.deepEqual(dimensions.symbolOverlaps, [], `${state}: profile symbols overlap their names`);
   assert.deepEqual(dimensions.offenders, [], `${state}: clipped or horizontally overflowing descendants: ${JSON.stringify(dimensions.offenders)}`);
 }
 
-async function assertHeaderContract(page, narrowLayout) {
-  const geometry = await page.evaluate(() => {
-    const box = selector => {
-      const node = document.querySelector(selector);
-      const rect = node.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
-    };
-    const textLines = node => {
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      return [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0).length;
-    };
-    return {
-      brand: box(".brand-block"),
-      title: box(".brand-block h1"),
-      current: box(".current-tunnel-link"),
-      actions: box(".header-actions"),
-      currentDisplay: getComputedStyle(document.querySelector(".current-tunnel-link")).display,
-      titleLines: textLines(document.querySelector(".brand-block h1")),
-      currentLines: textLines(document.querySelector(".current-tunnel-link")),
-      actionBoxes: [...document.querySelectorAll(".header-actions .button")].map(node => {
-        const rect = node.getBoundingClientRect();
-        return { top: rect.top, bottom: rect.bottom, height: rect.height };
-      }),
-      actionLines: [...document.querySelectorAll(".header-actions .button span")].map(node => ({ text: node.textContent.trim(), lines: textLines(node) })),
-    };
-  });
-  assert.equal(geometry.currentDisplay === "none", !narrowLayout, `Current tunnel link cascade is wrong for ${narrowLayout ? "narrow" : "wide"} layout`);
-  assert.equal(geometry.titleLines, 1, "Tunnelfolio wrapped in the header");
-  assert.deepEqual(geometry.actionLines, [{ text: "Import profiles", lines: 1 }, { text: "Settings", lines: 1 }], "header action labels wrapped or changed");
-  if (narrowLayout) {
-    assert.equal(geometry.currentLines, 1, "Current tunnel wrapped in the narrow header");
-    assert.ok(geometry.current.width > 0 && geometry.current.height >= 44, "narrow Current tunnel link is not visibly operable");
-    assert.ok(geometry.actions.top >= Math.max(geometry.brand.bottom, geometry.current.bottom) - 1, "narrow header actions are not on the deliberate second row");
-    assert.ok(Math.abs(geometry.actionBoxes[0].top - geometry.actionBoxes[1].top) <= 1, "Import and Settings split across extra narrow-header rows");
-    assert.ok(geometry.actions.height <= Math.max(...geometry.actionBoxes.map(box => box.height)) + 1, "narrow action row contains an unintended wrap");
+async function openConnectionDetails(page) {
+  if (!(await page.locator("#connection-details").evaluate(node => node.open))) await page.locator("#connection-details > summary").click();
+}
+
+async function openMoreActions(page) {
+  if (!(await page.locator(".more-actions").evaluate(node => node.open))) {
+    await page.locator(".more-actions > summary").focus();
+    await page.keyboard.press("Enter");
   }
 }
 
-async function assertSimplifiedWorkspace(page) {
-  const structure = await page.evaluate(() => {
-    const folio = document.querySelector("#main-content");
-    const library = document.querySelector("#library-screen").getBoundingClientRect();
-    const detail = document.querySelector("#detail-screen").getBoundingClientRect();
-    return {
-      legacyIndexCount: document.querySelectorAll(".folio-index").length,
-      display: getComputedStyle(folio).display,
-      libraryRight: library.right,
-      detailLeft: detail.left,
-      viewsInFilters: document.querySelector("#profile-filters #view-filter") !== null,
-      groupInFilters: document.querySelector("#profile-filters #group-filter") !== null,
-      openVPNInSettings: document.querySelector("#settings-dialog #openvpn-availability") !== null,
-      wireGuardInSettings: document.querySelector("#settings-dialog #wireguard-availability") !== null,
+async function assertVisibleFocus(page, expected, state) {
+  await page.waitForFunction(value => {
+    const node = document.activeElement;
+    if (!node?.matches(value)) return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.top >= -1 && rect.bottom <= innerHeight + 1 && rect.left >= -1 && rect.right <= innerWidth + 1;
+  }, expected);
+  assert.equal(await page.locator(":focus").isVisible(), true, `${state}: focused destination is hidden`);
+}
+
+async function assertListFirstGeometry(page, minimum, state) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => document.fonts.ready);
+  const geometry = await page.evaluate(() => {
+    const complete = node => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth;
     };
+    return { rows: [...document.querySelectorAll(".profile-row-button")].filter(complete).length, search: complete(document.querySelector("#profile-search")) };
   });
-  assert.equal(structure.legacyIndexCount, 0, "the retired index pane is still rendered");
-  assert.equal(structure.display, "grid", "wide workspace is not a two-pane grid");
-  assert.ok(Math.abs(structure.libraryRight - structure.detailLeft) <= 1, "wide library and detail panes do not meet");
-  assert.equal(structure.viewsInFilters, true, "profile views did not move into the library filters");
-  assert.equal(structure.groupInFilters, true, "group filtering did not move into the library filters");
-  assert.equal(structure.openVPNInSettings, true, "OpenVPN availability did not move into Settings");
-  assert.equal(structure.wireGuardInSettings, true, "WireGuard availability did not move into Settings");
+  assert.ok(geometry.rows >= minimum, `${state}: ${geometry.rows} complete rows visible; required ${minimum}`);
+  assert.equal(geometry.search, true, `${state}: Search is not fully visible`);
+  assert.equal(await page.locator("#detail-screen").isVisible(), false, `${state}: unselected inspector consumes library space`);
 }
 
 async function tabTo(page, selector, { reverse = false, limit = 40 } = {}) {
+  if (await page.evaluate(value => document.activeElement?.matches(value) === true, selector)) return;
   for (let count = 0; count < limit; count += 1) {
     await page.keyboard.press(reverse ? "Shift+Tab" : "Tab");
     if (await page.evaluate(value => document.activeElement?.matches(value) === true, selector)) return;
@@ -362,6 +401,7 @@ async function tabTo(page, selector, { reverse = false, limit = 40 } = {}) {
 }
 
 async function refreshTo(page, expected) {
+  await openConnectionDetails(page);
   await page.locator("#status-refresh").click();
   await page.waitForFunction(value => document.querySelector("#current-state")?.textContent === value, expected);
 }
@@ -384,39 +424,96 @@ async function waitImportOutcome(page) {
     ? { executablePath, headless: true, args: ["--no-sandbox"], timeout: 30000 }
     : { headless: true, timeout: 30000 };
   const browser = await browserType.launch(launchOptions);
+  let page;
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
-    const page = await context.newPage();
+    page = await context.newPage();
     page.setDefaultTimeout(15000);
     page.setDefaultNavigationTimeout(15000);
     await page.clock.setFixedTime(fixtureTime);
+    const externalRequests = [];
+    const lifecycleRequests = [];
+    page.on("request", request => {
+      if (new URL(request.url()).origin !== origin) externalRequests.push(request.url());
+      if (["/api/connect", "/api/disconnect"].includes(new URL(request.url()).pathname)) lifecycleRequests.push(request);
+    });
     profileGate = deferred();
     await page.goto(origin, { waitUntil: "domcontentloaded" });
     await scan(page, "initial library loading");
     profileGate.resolve();
     profileGate = null;
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
+    assert.deepEqual(await page.locator("#view-filter label").allTextContents(), ["Favorites", "Recent", "All"]);
+    for (const scenario of [
+      { favorites: [profiles[0].id], recents: [profiles[1].id], view: "favorites", ids: [profiles[0].id] },
+      { favorites: [], recents: [profiles[1].id], view: "recent", ids: [profiles[1].id] },
+      { favorites: [], recents: [], view: "all", ids: profiles.map(item => item.id) },
+    ]) {
+      preferences = { favorites: scenario.favorites, recents: scenario.recents, startup_mode: "manual" };
+      await page.reload({ waitUntil: "networkidle" });
+      assert.equal(await page.locator('input[name="profile-view"]:checked').inputValue(), scenario.view);
+      assert.deepEqual(await page.locator(".profile-row-button").evaluateAll(rows => rows.map(row => row.dataset.profileId)), scenario.ids);
+      if (scenario.view === "favorites") {
+        await page.getByRole("radio", { name: "Favorites", exact: true }).focus();
+        await page.keyboard.press("ArrowRight");
+        assert.equal(await page.getByRole("radio", { name: "Recent", exact: true }).isChecked(), true);
+        assert.equal(await page.locator(".profile-row-button").getAttribute("data-profile-id"), profiles[1].id);
+        await page.keyboard.press("ArrowRight");
+        assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true);
+        assert.equal(await page.locator(".profile-row-button").count(), 3);
+        await page.locator(".profile-row-button").first().click();
+        await page.locator("#detail-back").click();
+        assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true, "rerender overrode a manually chosen view");
+        profileGate = deferred();
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.getByRole("radio", { name: "All", exact: true }).click();
+        profileGate.resolve();
+        profileGate = null;
+        await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
+        assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true, "late initial data overrode an explicit All choice");
+      }
+    }
+    const disclosure = page.locator("#connection-details");
+    assert.equal(await disclosure.evaluate(node => node.open), false);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const below = await disclosure.evaluate(node => {
+        const summary = node.getBoundingClientRect();
+        const heading = document.querySelector(".current-heading").getBoundingClientRect();
+        return summary.top >= Math.max(heading.bottom, document.querySelector(".current-actions").getBoundingClientRect().bottom) && Math.abs(summary.left - heading.left) <= 1;
+      });
+      assert.equal(below, true, "connection details must sit below the host summary and actions");
+      await disclosure.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      assert.equal(await page.locator("#status-refresh").isVisible(), true);
+      await page.keyboard.press("Enter");
+      assert.equal(await page.locator("#status-refresh").isVisible(), false);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     assert.equal(await page.locator(".profile-row-button").count(), 3, "each profile must render as one row button");
-    assert.equal(await page.locator("img").count(), 0, "profile metadata created an image element");
     assert.equal(await page.evaluate(() => globalThis.injected), undefined, "profile metadata executed script");
     assert.match(await page.locator(".profile-name").first().textContent(), /^<img src=x/, "hostile metadata was not rendered literally");
     assert.equal(await page.locator("#location-filter option").count(), 4, "location filter was not derived from profile metadata");
-    const tokens = await page.evaluate(() => {
-      const style = getComputedStyle(document.documentElement);
-      return Object.fromEntries(["surface-page", "surface-panel", "surface-raised", "border-control", "text-primary", "text-secondary", "action-fill", "action-ink", "state-active", "state-warning", "state-danger"].map(name => [name, style.getPropertyValue(`--${name}`).trim()]));
-    });
-    for (const fill of ["action-fill", "state-active", "state-warning", "state-danger"]) assert.ok(contrast(tokens[fill], tokens["action-ink"]) >= 4.5, `${fill} does not support normal-size action text`);
-    for (const ink of ["text-primary", "text-secondary"]) assert.ok(contrast(tokens[ink], tokens["surface-panel"]) >= 4.5, `${ink} does not meet text contrast`);
-    for (const surface of ["surface-page", "surface-panel", "surface-raised"]) assert.ok(contrast(tokens["border-control"], tokens[surface]) >= 3, `border-control does not meet non-text contrast on ${surface}`);
-    await assertHeaderContract(page, false);
-    await assertSimplifiedWorkspace(page);
+    assert.equal(await page.locator("#detail-screen").isVisible(), false, "inspector must remain hidden until selection");
+    assert.equal(await page.locator("#filter-panel").isVisible(), false, "advanced filters must start collapsed");
+    await page.locator("#filters-toggle").click();
+    assert.equal(await page.locator("#filter-panel").isVisible(), true);
+    await page.locator("#group-filter").selectOption("Mullvad");
+    assert.equal(await page.locator(".profile-row-button").count(), 2);
+    await page.locator("#filters-toggle").click();
+    assert.equal(await page.locator("#active-filters").isVisible(), true, "collapsed filtering hid the active constraint");
+    await page.getByRole("button", { name: "Remove Group: Mullvad filter", exact: true }).click();
+    assert.equal(await page.locator(".profile-row-button").count(), 3, "removing a collapsed constraint did not restore matching profiles");
+    await assertResolvedContrast(page, "populated library");
     await scan(page, "ready populated library");
-    await page.evaluate(() => document.activeElement?.blur());
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
     await tabTo(page, ".skip-link");
     await tabTo(page, "#import-open");
     await tabTo(page, "#settings-open", { limit: 120 });
     await tabTo(page, "#import-open", { reverse: true });
+    await scan(page, "keyboard focused header control");
 
     await page.locator("#profile-search").fill("tfbbbbbbbbbbbb");
     assert.equal(await page.locator(".profile-row-button").count(), 1, "runtime identifiers must be searchable");
@@ -426,27 +523,102 @@ async function waitImportOutcome(page) {
     await page.locator("#clear-filters").focus();
     await page.keyboard.press("Enter");
     assert.equal(await page.locator(".profile-row-button").count(), 3);
+    await page.locator("#current-profile-open").click();
+    assert.match(await page.locator("#detail-title").textContent(), /Japan/);
+    assert.equal(lifecycleRequests.length, 0, "inspecting the host's current profile changed the tunnel");
+    await page.locator("#detail-back").click();
+    await page.waitForFunction(() => document.querySelector("#main-content").dataset.screen === "library" && document.activeElement?.dataset.profileId === "tf_bbbbbbbbbbbbbbbbbbbbbbbbbb");
 
-    const japan = page.locator('[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"]');
+    const japan = page.locator('.profile-row-button[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"]');
     await tabTo(page, '[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"]');
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.activeElement?.id === "detail-title");
     assert.match(await page.locator("#detail-title").textContent(), /Japan/);
-    assert.match(await japan.locator(".profile-state").textContent(), /Selected · Connected/);
-    assert.equal(await page.locator(".profile-summary .definition").count(), 3, "primary profile summary contains technical metadata");
+    assert.equal(await japan.getAttribute("aria-current"), "true", "selected profile lost its navigation state");
+    assert.match(await japan.getAttribute("aria-label"), /Current tunnel/, "current identity disappeared from selected profile");
     assert.equal(await page.locator(".technical-details").getAttribute("open"), null, "technical details are expanded by default");
     assert.match(await page.locator(".technical-details").textContent(), /Runtime identifier.*Original file.*Imported/s);
     assert.match(await page.locator("#protocol-details").textContent(), /198\.51\.100\.8:51820/);
     assert.match(await page.locator("#protocol-details").textContent(), /No handshake observed/);
     await page.locator("#detail-back").focus();
+    await openConnectionDetails(page);
     await page.locator("#status-refresh").click();
     assert.equal(await page.evaluate(() => document.activeElement?.id), "status-refresh", "status polling replaced unrelated focused controls");
     await scan(page, "selected connected detail");
 
+    await openMoreActions(page);
     await tabTo(page, '[data-detail-action="edit"]');
     await page.keyboard.press("Enter");
     assert.equal(await page.evaluate(() => document.activeElement?.id), "edit-title");
     await scan(page, "metadata dialog");
+    const emojiInput = page.getByLabel("Emoji (optional)", { exact: true });
+    const rowEmoji = japan.locator(".profile-emoji");
+    const rowProtocolIcon = japan.locator(".profile-symbol .icon");
+    const detailEmoji = page.locator("#detail-title .profile-emoji");
+    const currentEmoji = page.locator("#current-profile-open .profile-emoji");
+    for (const panel of ["#detail-title", "#current-profile-open"]) {
+      assert.equal(await page.locator(`${panel} .profile-symbol .icon`).isVisible(), true, "profile without an emoji must show its protocol icon");
+    }
+    const flagEmoji = "\u{1F1FA}\u{1F1F3}";
+    const joinedEmoji = "\u{1F469}\u{1F3FD}\u200D\u{1F4BB}";
+    assert.equal(await emojiInput.inputValue(), "", "an existing profile acquired an emoji");
+    await emojiInput.fill(flagEmoji);
+    await page.keyboard.press("Escape");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), "", "a cancelled emoji draft was saved");
+    await emojiInput.fill(flagEmoji);
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
+    assert.equal(await rowEmoji.textContent(), flagEmoji, "setting an emoji did not update the existing row");
+    assert.equal(await rowEmoji.isVisible(), true);
+    assert.equal(await rowProtocolIcon.isVisible(), false, "the emoji did not replace the protocol icon");
+    assert.match(await japan.getAttribute("aria-label"), /Japan.*WireGuard/, "emoji replaced the useful row name");
+    assert.equal(await detailEmoji.textContent(), flagEmoji, "selected panel missed the saved emoji");
+    assert.equal(await currentEmoji.textContent(), flagEmoji, "connected panel missed the saved emoji");
+    await page.locator("#status-refresh").click();
+    assert.equal(await currentEmoji.textContent(), flagEmoji, "status refresh reverted the saved emoji");
+    assert.equal(await rowEmoji.evaluate(async node => {
+      const font = `48px ${getComputedStyle(node).fontFamily}`;
+      await document.fonts.load(font, node.textContent);
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 64;
+      const context = canvas.getContext("2d");
+      context.font = font;
+      context.fillText(node.textContent, 0, 52);
+      const pixels = context.getImageData(0, 0, 64, 64).data;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index + 3] && pixels[index + 2] > pixels[index] + 40) return true;
+      }
+      return false;
+    }), true, "the blue flag rendered as missing or monochrome glyphs");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), flagEmoji, "the editor reopened with stale emoji metadata");
+    await emojiInput.fill(joinedEmoji);
+    metadataFailure = true;
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.id === "edit-error");
+    assert.equal(await emojiInput.inputValue(), joinedEmoji, "a save failure discarded the emoji draft");
+    assert.equal(await rowEmoji.textContent(), flagEmoji, "a rejected draft changed the row");
+    metadataFailure = false;
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
+    assert.equal(await rowEmoji.textContent(), joinedEmoji, "updating an emoji left the reused row stale or split a sequence");
+    assert.equal(await detailEmoji.textContent(), joinedEmoji, "selected panel retained the old emoji");
+    assert.equal(await currentEmoji.textContent(), joinedEmoji, "connected panel retained the old emoji");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), joinedEmoji, "the updated emoji was not preserved");
+    await emojiInput.fill("");
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
+    assert.equal(await rowEmoji.isVisible(), false, "clearing an emoji left it visible");
+    assert.equal(await rowProtocolIcon.isVisible(), true, "clearing an emoji did not restore the protocol icon");
+    assert.equal(await rowProtocolIcon.locator("use").getAttribute("href"), "#icon-wireguard");
+    for (const panel of ["#detail-title", "#current-profile-open"]) {
+      assert.equal(await page.locator(`${panel} .profile-emoji`).isVisible(), false);
+      assert.equal(await page.locator(`${panel} .profile-symbol .icon`).isVisible(), true, "clearing an emoji must restore panel protocol icons");
+    }
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), "", "the cleared emoji returned when reopening the editor");
     await page.keyboard.press("Escape");
     assert.equal(await page.evaluate(() => document.activeElement?.dataset?.detailAction), "edit");
 
@@ -471,25 +643,31 @@ async function waitImportOutcome(page) {
 
     await page.locator("#status-pause").click();
     assert.equal(await page.locator("#status-pause").getAttribute("aria-pressed"), "true");
-    assert.equal(await page.locator("#status-pause").textContent(), "Pause status updates");
-    assert.match(await page.locator("#current-observed").textContent(), /Updates paused/);
+    assert.notEqual(await page.locator("#current-tunnel").getAttribute("data-state"), "active", "paused observations retained a current healthy marker");
+    assert.match(await page.locator("#current-freshness").textContent(), /Updates paused/i);
     await scan(page, "paused status polling");
     await page.locator("#status-refresh").click();
-    assert.match(await page.locator("#current-observed").textContent(), /Updates paused/);
+    assert.match(await page.locator("#current-freshness").textContent(), /Updates paused/i);
     await page.locator("#status-pause").click();
     assert.equal(await page.locator("#status-pause").getAttribute("aria-pressed"), "false");
     await scan(page, "active status polling");
 
     await tabTo(page, '[data-profile-id="tf_cccccccccccccccccccccccccc"]');
     await page.keyboard.press("Enter");
-    assert.match(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"] .profile-state').textContent(), /Selected/);
-    assert.doesNotMatch(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"] .profile-state').textContent(), /Connected/);
-    assert.match(await page.locator('[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"] .profile-state').textContent(), /Connected/);
-    assert.doesNotMatch(await page.locator('[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"] .profile-state').textContent(), /Selected/);
+    assert.equal(await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').getAttribute("aria-current"), "true");
+    assert.equal(await japan.getAttribute("aria-current"), null);
+    assert.match(await page.locator("#current-title").textContent(), /Japan/, "selection replaced the observed current tunnel");
+    assert.equal(lifecycleRequests.length, 0, "selecting an inactive profile initiated a tunnel transition");
     await scan(page, "inactive profile detail");
     await tabTo(page, '[data-detail-action="connect"]');
     assert.match(await page.locator('[data-detail-action="connect"]').textContent(), /Germany/);
+    connectGate = deferred();
+    const switchRequest = page.waitForRequest(request => new URL(request.url()).pathname === "/api/connect");
     await page.keyboard.press("Enter");
+    assert.equal((await switchRequest).postDataJSON().profile, "tf_cccccccccccccccccccccccccc", "Switch targeted a profile other than the selection");
+    assert.match(await page.locator("#current-title").textContent(), /Japan/, "pending Switch fabricated a new observed current tunnel");
+    connectGate.resolve();
+    connectGate = null;
     await page.waitForFunction(() => document.activeElement?.id === "current-title"
       && document.querySelector("#current-title")?.textContent.includes("Germany")
       && document.querySelector("#current-tunnel")?.getAttribute("aria-busy") === "false"
@@ -501,6 +679,7 @@ async function waitImportOutcome(page) {
     await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').click();
     await page.locator('[data-detail-action="favorite"]').click();
     assert.equal(preferences.recents[0], "tf_cccccccccccccccccccccccccc", "favorite save erased the server's recent history");
+    assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true, "connection or favorite refresh changed the user's view");
 
     await tabTo(page, "#import-open", { reverse: true, limit: 120 });
     await page.keyboard.press("Enter");
@@ -559,6 +738,7 @@ async function waitImportOutcome(page) {
     status = { ...status, connected: true, lifecycle: "active", observation_available: true, profile: profiles[1], protocol_status: { state: "interface_active", received_bytes: 15360, sent_bytes: 4096, peers: [{ endpoint: "198.51.100.8:51820", latest_handshake: 0, received_bytes: 15360, sent_bytes: 4096 }] }, protocols: { openvpn: { available: false, reason: "openvpn was not found" }, wireguard: { available: true } } };
     profiles[0] = { ...profiles[0], available: false, unavailable_reason: "OpenVPN is unavailable on this host." };
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#current-state")?.textContent === "WireGuard interface active · no handshake observed");
     assert.match(await page.locator("#current-state").textContent(), /no handshake observed/);
     assert.match(await page.locator("#openvpn-availability").textContent(), /unavailable|not found/);
@@ -570,6 +750,7 @@ async function waitImportOutcome(page) {
     profiles[0] = { ...profiles[0], available: true, unavailable_reason: "" };
     statusFailure = true;
     await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').click();
+    await openConnectionDetails(page);
     await page.locator("#status-refresh").click();
     await page.waitForFunction(() => document.querySelector("#current-observed")?.textContent.includes("last known status"));
     assert.match(await page.locator("#current-observed").textContent(), /last known status/);
@@ -577,6 +758,17 @@ async function waitImportOutcome(page) {
     assert.equal(await page.locator('[data-detail-action="connect"]').isDisabled(), true, "stale state left Connect enabled");
     assert.equal(await page.locator('[data-detail-action="remove"]').isDisabled(), true, "stale state left removal enabled");
     assert.equal(await page.locator("#disconnect").isDisabled(), true, "stale state left Disconnect enabled");
+    assert.notEqual(await page.locator("#current-tunnel").getAttribute("data-state"), "active", "F2: stale observation retained a healthy marker");
+    assert.match(await page.locator("#current-state").textContent(), /unknown|unavailable|stale/i, "F2: last-known evidence remained the dominant healthy heading");
+    await page.locator("#connection-details > summary").click();
+    assert.equal(await page.locator("#current-freshness").isVisible(), true, "F2: freshness was hidden inside diagnostic disclosure");
+    assert.match(await page.locator("#current-freshness").textContent(), /last known|stale|unavailable/i);
+    await openConnectionDetails(page);
+    await page.locator("#status-pause").click();
+    assert.match(await page.locator("#current-freshness").textContent(), /paused/i);
+    assert.notEqual(await page.locator("#current-tunnel").getAttribute("data-state"), "active", "F2: pausing restored a healthy marker");
+    await page.locator("#status-pause").click();
+    assert.match(await page.locator("#current-freshness").textContent(), /last known|stale|unavailable/i, "F2: resuming erased stale evidence before recovery");
     await scan(page, "stale last-known tunnel status");
     await page.locator("#page-error-dismiss").click();
     statusFailure = false;
@@ -613,7 +805,7 @@ async function waitImportOutcome(page) {
     status = { ...status, protocol_status: { state: "interface_active", received_bytes: 15360, sent_bytes: 4096, peers: [{ endpoint: "198.51.100.8:51820", latest_handshake: fixtureEpochSeconds, received_bytes: 15360, sent_bytes: 4096 }] }, error: "" };
 
     await page.setViewportSize({ width: 320, height: 800 });
-    await assertHeaderContract(page, true);
+    await page.locator("#detail-back").click();
     await page.locator('.profile-row-button[data-profile-id="tf_bbbbbbbbbbbbbbbbbbbbbbbbbb"]').click();
     assert.equal(await page.locator("#detail-screen").isVisible(), true);
     await page.goBack();
@@ -640,6 +832,7 @@ async function waitImportOutcome(page) {
     await scan(page, "active profile removal blocked");
     await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').click();
     metadataFailure = true;
+    await openMoreActions(page);
     await tabTo(page, '[data-detail-action="edit"]');
     await page.keyboard.press("Enter");
     await tabTo(page, "#edit-name");
@@ -668,28 +861,35 @@ async function waitImportOutcome(page) {
     await page.keyboard.press("Enter");
     await tabTo(page, "#confirm-action");
     await page.keyboard.press("Enter");
-    await page.waitForFunction(() => document.activeElement?.id === "page-error-title");
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "page-error-title");
+    await assertVisibleFocus(page, "#detail-error", "removal failure");
+    assert.match(await page.locator("#detail-error").textContent(), /could not remove/i);
     assert.equal(await page.locator('.profile-row-button[data-profile-id="tf_cccccccccccccccccccccccccc"]').count(), 1);
     await scan(page, "removal failure");
-    await tabTo(page, "#page-error-dismiss");
-    await page.keyboard.press("Enter");
     removalFailure = false;
+    await openMoreActions(page);
     await tabTo(page, '[data-detail-action="remove"]');
     await page.keyboard.press("Enter");
     await tabTo(page, "#confirm-action");
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
     assert.equal(await page.locator('.profile-row-button[data-profile-id="tf_cccccccccccccccccccccccccc"]').count(), 0);
-    assert.match(await page.evaluate(() => document.activeElement?.dataset?.profileId || ""), /^tf_/, "removal did not focus the next surviving row");
+    await assertVisibleFocus(page, ".profile-row-button", "removal success");
     await scan(page, "removal success settlement");
 
+    await page.locator(".profile-row-button").first().click();
     await page.locator('[data-detail-action="favorite"]').click();
     await page.locator("#settings-open").click();
+    const savedStartup = preferences.startup_mode;
+    const draftStartup = savedStartup === "manual" ? "restore" : "manual";
+    await page.locator(`input[name="startup-mode"][value="${draftStartup}"]`).check();
+    preferences = { ...preferences, recents: [profiles[0].id] };
     await page.locator("#clear-favorites").click();
     await scan(page, "clear favorites confirmation");
     await page.locator("#confirm-action").click();
     await page.waitForFunction(() => document.querySelector("#status-announcer")?.textContent === "Favorites cleared");
+    assert.equal(preferences.startup_mode, savedStartup, "maintenance saved the unsaved startup draft");
+    assert.deepEqual(preferences.recents, [profiles[0].id], "maintenance overwrote newer unrelated preferences");
+    assert.equal(await page.locator(`input[name="startup-mode"][value="${draftStartup}"]`).isChecked(), true, "maintenance discarded the startup draft");
     assert.equal(await page.evaluate(() => document.activeElement?.id), "clear-recents");
     await page.locator("#clear-recents").click();
     await scan(page, "clear recents confirmation");
@@ -713,6 +913,8 @@ async function waitImportOutcome(page) {
     assert.equal(await page.locator("#disconnect").isDisabled(), true);
     assert.match(await page.locator("#read-only-notice").textContent(), /Read-only mode.*changes are disabled/);
     assert.equal(await page.locator("#read-only-notice").isVisible(), true);
+    assert.match(await page.locator("#detail-content").textContent(), /read.only|permission/i, "F3: disabled actions lack their authority restriction");
+    assert.doesNotMatch(await page.locator("#detail-content").textContent(), /refresh[^.]*before[^.]*chang|refresh[^.]*restor[^.]*action/i, "F3: fresh read-only observation incorrectly recommends refresh to permit mutation");
     await scan(page, "read-only library");
 
     readOnly = false;
@@ -724,6 +926,7 @@ async function waitImportOutcome(page) {
     preferences = { favorites: [profiles[1].id], recents: [profiles[1].id], startup_mode: "restore" };
     status = { ...status, connected: true, lifecycle: "active", observation_available: true, profile: profiles[1], protocol_status: { state: "interface_active", received_bytes: 15360, sent_bytes: 4096, peers: [{ endpoint: "198.51.100.8:51820", latest_handshake: fixtureEpochSeconds, received_bytes: 15360, sent_bytes: 4096 }] } };
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
     await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').click();
     await page.emulateMedia({ forcedColors: "none", reducedMotion: "reduce" });
@@ -737,7 +940,7 @@ async function waitImportOutcome(page) {
       await scan(page, `${viewport.width}x${viewport.height} responsive probe`);
     }
     await page.setViewportSize({ width: 568, height: 256 });
-    await page.evaluate(() => document.activeElement?.blur());
+    await page.reload({ waitUntil: "networkidle" });
     await tabTo(page, "#settings-open", { limit: 120 });
     await page.keyboard.press("Enter");
     await tabTo(page, 'input[name="startup-mode"]:checked');
@@ -756,13 +959,71 @@ async function waitImportOutcome(page) {
     await scan(page, "library load failure");
     profileFailure = false;
     await page.locator("#library-retry").click();
+    await page.waitForFunction(() => document.querySelector('input[name="profile-view"][value="favorites"]').checked);
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
+
+    await page.setViewportSize({ width: 568, height: 320 });
+    await openConnectionDetails(page);
+    await page.locator(".profile-row-button").first().focus();
+    await page.keyboard.press("Enter");
+    const headingBounds = await page.locator("#detail-title").boundingBox();
+    assert.ok(headingBounds && headingBounds.y >= 0 && headingBounds.y + headingBounds.height <= 320, "selection scrolled its focused heading outside the narrow viewport");
+    const favoriteResponse = deferred();
+    const favoriteStarted = deferred();
+    await page.route("**/api/preferences", async route => {
+      if (route.request().method() !== "PUT") return route.continue();
+      favoriteStarted.resolve();
+      await favoriteResponse.promise;
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "preferences_failed", error: "Preferences could not be saved." }) });
+    });
+    await page.locator('[data-detail-action="favorite"]').click();
+    await favoriteStarted.promise;
+    await page.locator("#detail-back").click();
+    await page.waitForFunction(() => document.querySelector("#main-content").dataset.screen === "library");
+    favoriteResponse.resolve();
+    await page.waitForFunction(() => !document.querySelector("#page-error").hidden);
+    assert.match(await page.locator("#page-error").textContent(), /favorite.*Office gateway/i, "leaving the inspector hid the pending mutation failure");
+    await page.unroute("**/api/preferences");
+
+    await page.route("**/api/preferences", route => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "preferences_unavailable", error: "Preferences unavailable." }) }));
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator("#settings-open").click();
+    await page.waitForFunction(() => !document.querySelector("#settings-retry").hidden);
+    assert.equal(await page.locator("#save-settings").isDisabled(), true, "unavailable preferences allowed saving invented defaults");
+    assert.equal(await page.locator('input[name="startup-mode"]:checked').count(), 0);
+    await page.unroute("**/api/preferences");
+    await page.locator("#settings-retry").click();
+    await page.waitForFunction(() => !document.querySelector("#save-settings").disabled);
+    assert.equal(await page.locator('input[name="startup-mode"]:checked').inputValue(), preferences.startup_mode, "retry did not restore authoritative preferences");
+    await page.locator("#settings-close").click();
+
+    // A1 uses the audited metadata shape: literal short names, uniform group/protocol, no inferred location.
+    profiles = Array.from({ length: 50 }, (_, index) => profile(stableID(index), "wireguard", `Mullvad ${["Jp", "De", "Us", "Gb", "Se"][index % 5]} ${String(index + 1).padStart(2, "0")}`, "Mullvad", "", false));
+    status = { ...status, connected: true, lifecycle: "active", profile: profiles[24], protocol_status: { state: "interface_active", received_bytes: 15360, sent_bytes: 4096, peers: [{ latest_handshake: fixtureEpochSeconds }] } };
+    preferences = { favorites: [], recents: [], startup_mode: "manual" };
+    for (const colorScheme of ["dark", "light"]) {
+      await page.emulateMedia({ colorScheme });
+      for (const [width, height, minimum] of [[390, 844, 3], [320, 568, 1], [1440, 900, 8]]) {
+        await page.setViewportSize({ width, height });
+        await page.reload({ waitUntil: "networkidle" });
+        await page.waitForFunction(() => document.querySelectorAll(".profile-row-button").length === 50);
+        const stateName = `A1 normal 50 profiles ${width}x${height} ${colorScheme}`;
+        await assertListFirstGeometry(page, minimum, stateName);
+        await assertNoHorizontalOverflow(page, stateName);
+        await scanAppearance(page, stateName, { fullPage: false });
+        await page.locator("#filters-toggle").click();
+        assert.equal(await page.locator("#location-filter-field").isVisible(), false, "absent Location left an empty filter field");
+        await page.locator("#filters-toggle").click();
+      }
+    }
 
     profiles = Array.from({ length: 50 }, (_, index) => profile(stableID(index), index % 2 ? "wireguard" : "openvpn", `Profile ${String(index + 1).padStart(3, "0")}`, `Group ${String(index + 1).padStart(3, "0")}`, index % 2 ? "JP" : "DE", index > 44));
     status = { ...status, connected: true, lifecycle: "active", profile: profiles[24], protocol_status: { state: "interface_active", received_bytes: 1, sent_bytes: 2, peers: [] } };
     preferences = { favorites: [profiles[0].id, profiles[24].id, profiles[49].id], recents: profiles.slice(45).map(item => item.id), startup_mode: "manual" };
     await page.setViewportSize({ width: 375, height: 667 });
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "50 profiles");
     assert.equal(await page.locator(".profile-row-button").count(), 50);
     assert.equal(await page.locator("#group-filter").count(), 1, "Group filtering must remain one native control");
@@ -777,64 +1038,102 @@ async function waitImportOutcome(page) {
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "library");
     assert.equal(await page.evaluate(() => document.activeElement?.dataset?.profileId), profiles[49].id);
-    await page.keyboard.press("Shift+Tab");
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "skip-profile-list", "narrow keyboard path did not reach Skip profile list from the selected row");
-    assert.deepEqual(await page.evaluate(() => history.state), { screen: "library" });
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "detail" && document.activeElement?.id === "detail-title");
-    assert.deepEqual(await page.evaluate(() => history.state), { screen: "detail", profile: profiles[49].id });
     assert.match(await page.locator("#detail-title").textContent(), /Profile 050/);
-    await page.keyboard.press("Shift+Tab");
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "detail-back");
-    await page.keyboard.press("Enter");
-    await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "library" && document.activeElement?.dataset?.profileId);
+    assert.equal(await page.getByRole("button", { name: "Back to profiles", exact: true }).isVisible(), true);
+    await page.goBack();
+    await assertVisibleFocus(page, `[data-profile-id="${profiles[49].id}"]`, "browser Back returns to the selected row");
     await assertNoHorizontalOverflow(page, "50-profile narrow fixture");
-    await scan(page, "50-profile narrow list detail skip and return");
+    await scan(page, "50-profile narrow list and detail navigation");
+    await page.locator(".profile-row-button").click();
+    await page.locator("#detail-back").click();
+    await page.locator("#profile-search").focus();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.evaluate(() => document.activeElement.id), "profile-search", "closing details stole subsequent user focus");
 
     profiles = Array.from({ length: 100 }, (_, index) => profile(stableID(index), index % 2 ? "wireguard" : "openvpn", `Profile ${String(index + 1).padStart(3, "0")}`, `Group ${String(index + 1).padStart(3, "0")}`, index % 2 ? "JP" : "DE", index > 94));
     status = { ...status, connected: true, lifecycle: "active", profile: profiles[49], protocol_status: { state: "interface_active", received_bytes: 1, sent_bytes: 2, peers: [] } };
     preferences = { favorites: [profiles[0].id, profiles[49].id, profiles[99].id], recents: profiles.slice(95).map(item => item.id), startup_mode: "manual" };
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "100 profiles");
     assert.equal(await page.locator(".profile-row-button").count(), 100);
     assert.equal(await page.locator("#group-filter option").count(), 101);
     for (const index of [0, 49, 99]) {
       const row = page.locator(".profile-row-button").nth(index);
       await row.scrollIntoViewIfNeeded();
-      const before = await page.evaluate(() => ({ window: window.scrollY, library: document.querySelector("#library-screen").scrollTop }));
+      const before = await page.evaluate(() => window.scrollY);
       await row.click();
       assert.equal(await page.evaluate(() => document.activeElement?.id), "detail-title", `row ${index + 1} did not focus detail`);
+      if (index > 0) assert.ok(await page.evaluate(() => window.scrollY) >= before - page.viewportSize().height, `row ${index + 1}: revealing inspector jumped away from the selection`);
       await page.locator("#detail-back").click();
-      const after = await page.evaluate(() => ({ window: window.scrollY, library: document.querySelector("#library-screen").scrollTop, focused: document.activeElement?.dataset?.profileId }));
-      assert.equal(after.focused, profiles[index].id, `row ${index + 1} was not refocused on return`);
-      assert.ok(Math.abs(after.window - before.window) <= 1 && Math.abs(after.library - before.library) <= 1, `row ${index + 1} lost its exact scroll position: ${JSON.stringify({ before, after })}`);
+      await assertVisibleFocus(page, `[data-profile-id="${profiles[index].id}"]`, `wide row ${index + 1} Return`);
     }
+    await page.locator(".profile-row-button").first().click();
+    await page.locator(".profile-row-button").last().click();
+    await page.getByRole("button", { name: "Close details", exact: true }).click();
+    await page.waitForFunction(() => history.state?.screen === "library");
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await assertVisibleFocus(page, `[data-profile-id="${profiles[99].id}"]`, "closing after changing selection preserves the last row, not the history entry's first row");
     await page.setViewportSize({ width: 320, height: 568 });
     for (const index of [0, 49, 99]) {
       for (const returnMethod of ["Back control", "browser Back"]) {
         const row = page.locator(".profile-row-button").nth(index);
         await row.scrollIntoViewIfNeeded();
         await row.focus();
-        const before = await page.evaluate(() => ({ window: window.scrollY, library: document.querySelector("#library-screen").scrollTop }));
         await page.keyboard.press("Enter");
         await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "detail");
         if (returnMethod === "Back control") await page.locator("#detail-back").click();
         else await page.goBack();
         await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "library");
-        await page.waitForFunction(expected => {
-          const library = document.querySelector("#library-screen").scrollTop;
-          return Math.abs(window.scrollY - expected.window) <= 1 && Math.abs(library - expected.library) <= 1;
-        }, before).catch(async () => {
-          const current = await page.evaluate(() => ({ window: window.scrollY, library: document.querySelector("#library-screen").scrollTop, focused: document.activeElement?.dataset?.profileId }));
-          assert.fail(`${returnMethod} did not restore narrow row ${index + 1} scroll: ${JSON.stringify({ before, current })}`);
-        });
-        const after = await page.evaluate(() => ({ window: window.scrollY, library: document.querySelector("#library-screen").scrollTop, focused: document.activeElement?.dataset?.profileId }));
-        assert.equal(after.focused, profiles[index].id, `${returnMethod} did not refocus narrow row ${index + 1}`);
-        assert.ok(Math.abs(after.window - before.window) <= 1 && Math.abs(after.library - before.library) <= 1, `${returnMethod} lost narrow row ${index + 1} scroll: ${JSON.stringify({ before, after })}`);
+        await assertVisibleFocus(page, `[data-profile-id="${profiles[index].id}"]`, `${returnMethod} narrow row ${index + 1}`);
       }
     }
     await scan(page, "100-profile narrow library and detail return");
+    await page.locator("#profile-search").fill("Group 050");
+    const crossingRow = page.locator(".profile-row-button");
+    assert.equal(await crossingRow.count(), 1);
+    const crossingID = await crossingRow.getAttribute("data-profile-id");
+    await crossingRow.click();
+    for (const width of [1119, 1120, 1121, 1119]) {
+      await page.setViewportSize({ width, height: 720 });
+      await page.waitForFunction(() => document.querySelector("#detail-title") === document.activeElement);
+      assert.equal(await page.locator('.profile-row-button[aria-current="true"]').getAttribute("data-profile-id"), crossingID, "breakpoint crossing changed the selected profile");
+      assert.equal(await page.locator("#profile-search").inputValue(), "Group 050", "breakpoint crossing lost the filter");
+      const focusBounds = await page.locator("#detail-title").boundingBox();
+      assert.ok(focusBounds && focusBounds.y >= 0 && focusBounds.y < 720, "breakpoint crossing hid the focused inspector");
+    }
+    await page.goBack();
+    await assertVisibleFocus(page, `.profile-row-button[data-profile-id="${crossingID}"]`, "breakpoint crossing browser Back");
+
+    // F14: a neighbor in the full inventory is not necessarily a visible neighbor.
+    profiles = [
+      profile(stableID(7000), "wireguard", "Keep alpha", "Visible subset", "", false),
+      profile(stableID(7001), "wireguard", "Outside filter", "Other", "", false),
+      profile(stableID(7002), "wireguard", "Keep beta", "Visible subset", "", false),
+    ];
+    status = { ...status, connected: false, lifecycle: "disconnected", profile: null, protocol_status: null };
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => document.querySelectorAll(".profile-row-button").length === 3);
+    await page.locator("#profile-search").fill("Visible subset");
+    await page.locator(`[data-profile-id="${stableID(7000)}"]`).click();
+    await openMoreActions(page);
+    await page.locator('[data-detail-action="remove"]').click();
+    await page.locator("#confirm-action").click();
+    await assertVisibleFocus(page, `[data-profile-id="${stableID(7002)}"]`, "F14 filtered removal");
+    assert.equal(await page.locator("#profile-search").inputValue(), "Visible subset");
+    assert.equal(await page.locator(".profile-row-button").count(), 1);
+    await scan(page, "F14 filtered removal visible survivor");
+    await page.locator(`[data-profile-id="${stableID(7002)}"]`).click();
+    await openMoreActions(page);
+    await page.locator('[data-detail-action="remove"]').click();
+    await page.locator("#confirm-action").click();
+    await assertVisibleFocus(page, "#filtered-empty h2, #filtered-empty h3, #filtered-empty[tabindex]", "F14 filtered removal empty state");
+    assert.equal(await page.locator("#filtered-empty").isVisible(), true);
+    assert.equal(await page.locator("#library-empty").isVisible(), false, "filtered empty became first use despite surviving inventory");
+    await scan(page, "F14 filtered removal no visible survivor");
 
     profiles = [];
     preferences = { favorites: [], recents: [], startup_mode: "manual" };
@@ -906,7 +1205,7 @@ async function waitImportOutcome(page) {
     await page.locator("#profile-files").setInputFiles({ name: "duplicate.ovpn", mimeType: "application/octet-stream", buffer: Buffer.from("client\ndev tun\nremote 198.51.100.1 1194\n") });
     await page.locator("#inspect-profiles").click();
     await page.waitForFunction(() => !document.querySelector("#import-review-panel")?.hidden);
-    assert.match(await page.locator(".import-file").textContent(), /already in library/);
+    assert.match(await page.locator("#import-review-summary").textContent(), /0 new.*1 already present or duplicate/i);
     await scan(page, "duplicate import review");
     await page.locator("#trust-profiles").check();
     await page.locator("#commit-import").click();
@@ -951,7 +1250,17 @@ async function waitImportOutcome(page) {
     await tabTo(page, '#import-errors a[href="#import-group-0"]');
     await page.keyboard.press("Enter");
     assert.equal(await page.evaluate(() => document.activeElement?.id), "import-group-0");
+    commitScenario = "stale_inspection";
+    await page.locator("#commit-import").click();
+    await page.waitForFunction(() => document.querySelector("#import-errors")?.textContent.includes("library changed"));
+    assert.equal(await page.locator("#commit-import").isDisabled(), true, "stale receipt allowed publication without reinspection");
+    assert.equal(await page.locator("#import-group-0").inputValue(), "Work", "stale receipt discarded metadata");
+    const inspectionsBefore = inspectionSequence;
+    await page.locator("#inspect-again").click();
+    await page.waitForFunction(() => !document.querySelector("#import-review-panel").hidden);
+    assert.equal(inspectionSequence, inspectionsBefore + 1, "receipt recovery did not obtain a new inspection");
     commitScenario = "ready";
+    await page.locator("#trust-profiles").check();
     await page.waitForFunction(() => !document.querySelector("#commit-import")?.disabled);
     await tabTo(page, "#commit-import");
     await page.keyboard.press("Enter");
@@ -985,8 +1294,8 @@ async function waitImportOutcome(page) {
     await page.locator("#import-finish").click();
     await page.locator("#library-retry").click();
     await page.waitForFunction(id => !document.querySelector(`[data-profile-id="${CSS.escape(id)}"]`), vanishedID);
-    await page.waitForFunction(id => document.activeElement?.dataset?.profileId === id, expectedReplacementID);
-    assert.equal(await page.evaluate(() => document.activeElement?.dataset?.profileId || ""), expectedReplacementID, "externally disappeared selection did not settle on the next filtered row");
+    await assertVisibleFocus(page, `[data-profile-id="${expectedReplacementID}"]`, "F14 externally disappeared filtered selection");
+    assert.equal(await page.locator("#profile-search").inputValue(), "Disappearance fixture");
     await scan(page, "selected profile disappearance settlement");
 
     profiles = [];
@@ -1078,7 +1387,71 @@ async function waitImportOutcome(page) {
     assert.equal(await page.evaluate(() => document.activeElement?.id), "import-status", "uncertain import did not focus its page-level settlement after closing the dialog");
     assert.equal(await page.locator("#import-open").isDisabled(), true, "partial publication uncertainty did not fail closed");
     await scan(page, "partial import reconciliation failure");
+
+    for (const scenario of ["coded-all", "coded-none", "coded-none-background", "coded-partial", "coded-reconcile-failure"]) {
+      profileFailure = false;
+      profiles = [];
+      commitScenario = scenario;
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "0 profiles");
+      await page.locator("#import-open").click();
+      await page.locator("#profile-files").setInputFiles([
+        { name: "coded-a.ovpn", mimeType: "application/octet-stream", buffer: Buffer.from("client\ndev tun\nremote 198.51.100.5 1194\n") },
+        { name: "coded-b.conf", mimeType: "application/octet-stream", buffer: Buffer.from("[Interface]\nPrivateKey = synthetic\n") },
+      ]);
+      await page.locator("#inspect-profiles").click();
+      await page.waitForFunction(() => document.querySelectorAll(".import-file").length === 2);
+      await page.locator("#trust-profiles").check();
+      const postsBefore = importPosts;
+      if (scenario === "coded-none-background") commitGate = deferred();
+      await page.locator("#commit-import").click();
+      if (scenario === "coded-none-background") {
+        await page.locator("#import-close").click();
+        assert.equal(await page.locator("#import-dialog").isVisible(), false);
+        commitGate.resolve();
+        commitGate = null;
+        await page.waitForFunction(() => document.querySelector("#import-status-text")?.textContent.includes("none of the proposed profiles is present"));
+        await assertVisibleFocus(page, "#import-status", "F13 background absent settlement");
+        assert.equal(await page.locator("#import-open").isDisabled(), false);
+        await page.locator("#import-open").click();
+      }
+      if (scenario === "coded-all") {
+        await waitImportOutcome(page);
+        assert.match(await page.locator("#import-outcome-text").textContent(), /library confirmed/i, "F13 coded success did not reconcile publication");
+        assert.equal(await page.locator(".profile-row-button").count(), 2);
+        assert.equal(await page.locator("#import-open").isDisabled(), false);
+      } else if (scenario === "coded-none" || scenario === "coded-none-background") {
+        await page.waitForFunction(() => document.querySelector("#import-errors")?.textContent.includes("none of the proposed profiles is present"));
+        assert.equal(await page.locator("#import-review-panel").isVisible(), true);
+        assert.equal(await page.locator("#commit-import").isDisabled(), false, "F13 proven absent publication did not allow an explicit retry");
+        assert.equal(await page.locator("#trust-profiles").isChecked(), true, "F13 reconciliation discarded the reviewed draft");
+      } else {
+        await page.waitForFunction(() => document.querySelector("#import-status-text")?.textContent.includes("Do not retry"));
+        assert.match(await page.locator("#import-status-text").textContent(), scenario === "coded-partial" ? /only part/i : /could not be reconciled/i);
+        assert.equal(await page.locator("#import-dialog").isVisible(), false);
+        assert.equal(await page.locator("#import-open").isDisabled(), true, "F13 unknown publication allowed a second import");
+        await assertVisibleFocus(page, "#import-status", "F13 locked unknown outcome");
+        await openConnectionDetails(page);
+        await page.locator("#status-refresh").click();
+        await page.waitForFunction(() => document.querySelector("#current-tunnel")?.getAttribute("aria-busy") === "false");
+        assert.equal(await page.locator("#import-open").isDisabled(), true, "status recovery unlocked unresolved import publication");
+      }
+      assert.equal(importPosts, postsBefore + 1, "F13 reconciliation submitted a duplicate import");
+      assert.equal(status.connected, false, "import unexpectedly connected a tunnel");
+      await scan(page, `F13 ${scenario} settlement`);
+    }
+    assert.deepEqual(externalRequests, [], "the local interface requested an external asset or service");
     console.log(`${browserName} UI behavior and accessibility checks passed`);
+  } catch (error) {
+    if (artifactDir && page) {
+      try {
+        await page.screenshot({ path: path.join(artifactDir, "failure.png"), fullPage: true });
+        artifactManifest.push({ state: "failure", file: "failure.png", viewport: page.viewportSize(), error: error.message });
+      } catch (captureError) {
+        console.error(`Failure screenshot could not be captured: ${captureError.message}`);
+      }
+    }
+    throw error;
   } finally {
     if (artifactDir) fs.writeFileSync(path.join(artifactDir, "manifest.json"), `${JSON.stringify({
       candidate_commit: process.env.CANDIDATE_COMMIT || "unbound-local-run",
