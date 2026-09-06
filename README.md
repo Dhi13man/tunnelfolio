@@ -12,7 +12,7 @@ Import profiles, organize them into Groups, and connect or switch the host's sin
 > [!WARNING]
 > Tunnelfolio runs with root network authority. A profile can change the host's routes and DNS. Import only profiles you trust, keep the application on loopback, and put an authenticated same-host HTTPS proxy in front of mutable deployments.
 
-![Tunnelfolio Folio Desk interface with profile index, library, and selected-profile detail](docs/screenshots/folio-desk.png)
+![Tunnelfolio's graphite-and-copper library with compact host status and eight visible profiles](docs/screenshots/folio-desk.png)
 
 ## What v0.1 includes
 
@@ -21,6 +21,7 @@ Import profiles, organize them into Groups, and connect or switch the host's sin
 - Strict inspection, duplicate detection, explicit trust confirmation, and all-or-none publication.
 - Stable profile identity with editable display name, Group, and optional location.
 - All, Favorites, and Recent views; search; Group, location, and protocol filters.
+- List-first layout with an on-demand inspector, disclosed filters and system light/dark appearance.
 - One-profile connect, same-protocol switch, cross-protocol switch, disconnect, and failed-target restoration.
 - Protocol-native status: OpenVPN process state and WireGuard interface, handshake, endpoint, and transfer evidence.
 - Manual startup by default, with opt-in restoration of the last desired profile.
@@ -102,12 +103,14 @@ The response contains `"live":true`, read-only state, readiness, and availabilit
 3. Choose one or more trusted `.ovpn` or `.conf` files.
 4. Review detected protocols, names, Groups, locations, duplicates, and policy findings.
 5. Confirm that you trust the files, then import them.
-6. Select each imported row and inspect its protocol, runtime name, source filename, and availability.
-7. Correct its display name, Group, or location and mark useful profiles as Favorites.
-8. Connect one known-good profile, then verify **Current tunnel**, protocol-native status, DNS, and outbound reachability.
+6. Select an imported row. Open **Technical details** for its runtime identifier and source filename.
+7. Use **More actions → Edit metadata** to correct its name, Group or location; mark useful profiles as Favorites.
+8. Connect one known-good profile, then verify **Host tunnel**, protocol-native status, DNS, and outbound reachability.
 9. Exercise a switch and **Disconnect**. If a target fails, confirm the prior tunnel is restored or the interface reports the exact recovery failure.
 
 Import never connects a profile. Tunnelfolio preserves accepted source bytes and stores them under private managed state. It never renders configuration contents, keys, certificates, or content fingerprints in the browser.
+
+Selecting a row or the host's profile name only opens details; it never connects. **Connection details** exposes transfer evidence and polling controls. Stale or unavailable observations remain visible when collapsed. In Settings, **Save settings** applies the Startup choice; Library maintenance clears Favorites or Recent separately without saving an unsaved Startup choice.
 
 ## Configuration
 
@@ -182,3 +185,5 @@ Report vulnerabilities through GitHub private vulnerability reporting as describ
 ## License
 
 Tunnelfolio is available under the [MIT License](LICENSE).
+
+The embedded UI includes [Manrope under SIL OFL 1.1](internal/web/assets/Manrope-OFL.txt) and [Lucide/Feather icons under ISC/MIT](internal/web/assets/Lucide-LICENSE.txt), served locally without external asset requests.

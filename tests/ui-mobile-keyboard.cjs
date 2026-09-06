@@ -94,7 +94,7 @@ function createServer() {
       response.writeHead(404);
       return response.end();
     }
-    const contentType = file.endsWith(".css") ? "text/css; charset=utf-8" : file.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8";
+    const contentType = file.endsWith(".woff2") ? "font/woff2" : file.endsWith(".txt") ? "text/plain; charset=utf-8" : file.endsWith(".css") ? "text/css; charset=utf-8" : file.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8";
     response.writeHead(200, {
       "Content-Type": contentType,
       "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -223,6 +223,7 @@ async function tapFocusedInputWithCDP(page, selector) {
     );
     await page.locator(".profile-row-button").click();
     await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "detail");
+    await page.locator(".more-actions > summary").click();
     await page.locator('[data-detail-action="edit"]').click();
     await page.waitForFunction(() => document.querySelector("#edit-dialog")?.open);
 
