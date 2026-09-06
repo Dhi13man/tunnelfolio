@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Optional profile emoji identifiers, editable without changing tunnel identity
+  or connection state; clearing the emoji restores the protocol icon.
+- Locally served Noto Color Emoji for country flags and multi-code-point emoji.
+
 ### Changed
 
 - Replace the text-heavy workspace with graphite-and-copper light/dark styling,

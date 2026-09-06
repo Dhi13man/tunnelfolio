@@ -152,7 +152,10 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
         button.className = "profile-row-button";
         button.dataset.profileId = profile.id;
         button.dataset.focusKey = `profile:${profile.id}`;
-        button.append(icon(profile.protocol === "wireguard" ? "wireguard" : "openvpn", "profile-symbol"));
+        const symbol = appendText(button, "profile-symbol", "");
+        symbol.setAttribute("aria-hidden", "true");
+        symbol.append(icon(profile.protocol === "wireguard" ? "wireguard" : "openvpn", ""));
+        appendText(symbol, "profile-emoji", "");
         const copy = appendText(button, "profile-copy", "");
         appendText(copy, "profile-name", "");
         appendText(copy, "profile-meta", "");
@@ -162,6 +165,12 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
         item.append(button);
       }
       const button = item.firstElementChild;
+      const emoji = profile.emoji || "";
+      const symbol = button.querySelector(".profile-symbol");
+      const emojiText = symbol.querySelector(".profile-emoji");
+      if (emojiText.textContent !== emoji) emojiText.textContent = emoji;
+      emojiText.hidden = !emoji;
+      symbol.querySelector(".icon").toggleAttribute("hidden", Boolean(emoji));
       button.querySelector(".profile-name").textContent = profile.display_name;
       const metadata = button.querySelector(".profile-meta");
       metadata.textContent = [!shared.group && profile.group, !shared.location && profile.location, !shared.protocol && protocolName(profile.protocol)].filter(Boolean).join(" · ");

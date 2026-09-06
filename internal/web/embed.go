@@ -18,10 +18,10 @@ func Asset(name string) ([]byte, string, error) {
 	case "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "state.js":
 		data, err := files.ReadFile("assets/" + name)
 		return data, "text/javascript; charset=utf-8", err
-	case "manrope-latin.woff2":
-		data, err := files.ReadFile("assets/manrope-latin.woff2")
+	case "manrope-latin.woff2", "noto-color-emoji.woff2":
+		data, err := files.ReadFile("assets/" + name)
 		return data, "font/woff2", err
-	case "Manrope-OFL.txt", "Lucide-LICENSE.txt":
+	case "Manrope-OFL.txt", "NotoColorEmoji-OFL.txt", "Lucide-LICENSE.txt":
 		data, err := files.ReadFile("assets/" + name)
 		return data, "text/plain; charset=utf-8", err
 	default:

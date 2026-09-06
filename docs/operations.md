@@ -159,6 +159,11 @@ The installer preserves `/etc/tunnelfolio` and `/var/lib/tunnelfolio`.
 
 Use the verified backup from immediately before the upgrade.
 
+Older binaries without emoji support reject manifests containing emoji fields.
+Restore the matching pre-upgrade state backup with the old binary, as below.
+To retain newer metadata instead, clear every profile's emoji through the current
+UI before disconnecting and rolling back.
+
 1. Disconnect through the authenticated UI and confirm `disconnected`.
 2. Stop Tunnelfolio and prove its service processes and managed WireGuard interfaces absent:
 

@@ -32,6 +32,8 @@ const (
 	MaxGroupBytes       = 256
 	MaxLocationRunes    = 80
 	MaxLocationBytes    = 320
+	MaxEmojiRunes       = 16
+	MaxEmojiBytes       = 64
 )
 
 var (
@@ -61,6 +63,7 @@ type Profile struct {
 	DisplayName              string    `json:"display_name"`
 	Group                    string    `json:"group"`
 	Location                 string    `json:"location,omitempty"`
+	Emoji                    string    `json:"emoji,omitempty"`
 	Identifier               string    `json:"identifier"`
 	OriginalFilename         string    `json:"original_filename"`
 	ImportedAt               time.Time `json:"imported_at"`
@@ -83,6 +86,7 @@ type Metadata struct {
 	DisplayName string
 	Group       string
 	Location    string
+	Emoji       string
 }
 
 type MetadataValidationError struct {
@@ -98,6 +102,8 @@ type MetadataPatch struct {
 	Group         *string
 	Location      *string
 	ClearLocation bool
+	Emoji         *string
+	ClearEmoji    bool
 }
 
 func InitialManifest() Manifest {
@@ -181,7 +187,7 @@ func ValidateProfile(profile Profile) error {
 	if !ValidProtocol(profile.Protocol) {
 		return errors.New("invalid protocol")
 	}
-	if err := ValidateMetadata(Metadata{DisplayName: profile.DisplayName, Group: profile.Group, Location: profile.Location}); err != nil {
+	if err := ValidateMetadata(Metadata{DisplayName: profile.DisplayName, Group: profile.Group, Location: profile.Location, Emoji: profile.Emoji}); err != nil {
 		return err
 	}
 	if !identifierPattern.MatchString(profile.Identifier) {
@@ -216,6 +222,11 @@ func ValidateMetadata(metadata Metadata) error {
 	if metadata.Location != "" {
 		if code := validateText(metadata.Location, 1, MaxLocationRunes, MaxLocationBytes); code != "" {
 			return &MetadataValidationError{Field: "location", Code: code}
+		}
+	}
+	if metadata.Emoji != "" {
+		if code := validateText(metadata.Emoji, 1, MaxEmojiRunes, MaxEmojiBytes); code != "" {
+			return &MetadataValidationError{Field: "emoji", Code: code}
 		}
 	}
 	return nil

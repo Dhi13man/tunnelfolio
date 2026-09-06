@@ -50,6 +50,61 @@ func TestStorePublishesByteExactObjectAndReloads(t *testing.T) {
 	}
 }
 
+func TestStoreEmojiMetadataTransitionsPersistAtomically(t *testing.T) {
+	root := t.TempDir()
+	store := openTestStore(t, StoreOptions{Root: root, RequiredUID: -1})
+	data := validOpenVPNProfile()
+	want := testProfile(t, ProtocolOpenVPN, data, 7)
+	if _, err := store.Publish(0, []NewObject{{Profile: want, Bytes: data}}); err != nil {
+		t.Fatal(err)
+	}
+	flag, sequence, empty := "🇯🇵", "👩🏽‍💻", ""
+	name, invalid, rejectedName := "Renamed office", "🚀\n🚀", "Must not persist"
+	for _, step := range []struct {
+		name    string
+		patch   MetadataPatch
+		emoji   string
+		display string
+		invalid bool
+	}{
+		{name: "legacy missing", patch: MetadataPatch{Group: &want.Group}, display: want.DisplayName},
+		{name: "set flag", patch: MetadataPatch{Emoji: &flag}, emoji: flag, display: want.DisplayName},
+		{name: "omitted preserves", patch: MetadataPatch{DisplayName: &name}, emoji: flag, display: name},
+		{name: "invalid is atomic", patch: MetadataPatch{DisplayName: &rejectedName, Emoji: &invalid}, emoji: flag, display: name, invalid: true},
+		{name: "set sequence", patch: MetadataPatch{Emoji: &sequence}, emoji: sequence, display: name},
+		{name: "empty clears", patch: MetadataPatch{Emoji: &empty}, display: name},
+		{name: "reset flag", patch: MetadataPatch{Emoji: &flag}, emoji: flag, display: name},
+		{name: "explicit clear", patch: MetadataPatch{ClearEmoji: true}, display: name},
+	} {
+		t.Log(step.name)
+		revision := store.Snapshot().LibraryRevision
+		_, err := store.UpdateMetadata(want.ID, step.patch)
+		if step.invalid {
+			if !errors.Is(err, ErrInvalidMetadata) {
+				t.Fatalf("invalid update = %v", err)
+			}
+		} else {
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision++
+		}
+		want.Emoji, want.DisplayName = step.emoji, step.display
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		store = openTestStore(t, StoreOptions{Root: root, RequiredUID: -1})
+		got, err := store.Resolve(want.ID)
+		if err != nil || got != want || store.Snapshot().LibraryRevision != revision {
+			t.Fatalf("durable profile = %+v, %v; want %+v at revision %d", got, err, want, revision)
+		}
+		stored, err := os.ReadFile(store.ObjectPath(got))
+		if err != nil || !bytes.Equal(stored, data) {
+			t.Fatalf("metadata update changed tunnel content: %v", err)
+		}
+	}
+}
+
 func TestStoreReopensWithCorruptReferencedObjectUnavailable(t *testing.T) {
 	root := t.TempDir()
 	store := openTestStore(t, StoreOptions{Root: root, RequiredUID: -1})

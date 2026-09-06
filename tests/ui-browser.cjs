@@ -259,7 +259,7 @@ async function handleAPI(request, response, url) {
     const id = decodeURIComponent(match[1]);
     const patch = JSON.parse((await readBody(request)).toString("utf8"));
     const index = profiles.findIndex(item => item.id === id);
-    profiles[index] = { ...profiles[index], display_name: patch.display_name, group: patch.group, location: patch.location || "" };
+    profiles[index] = { ...profiles[index], display_name: patch.display_name, group: patch.group, location: patch.location || "", emoji: Object.hasOwn(patch, "emoji") ? patch.emoji || "" : profiles[index].emoji };
     return json(response, 200, profiles[index]);
   }
   if (match && request.method === "DELETE") {
@@ -499,6 +499,59 @@ async function waitImportOutcome(page) {
     await page.keyboard.press("Enter");
     assert.equal(await page.evaluate(() => document.activeElement?.id), "edit-title");
     await scan(page, "metadata dialog");
+    const emojiInput = page.getByLabel("Emoji (optional)", { exact: true });
+    const rowEmoji = japan.locator(".profile-emoji");
+    const rowProtocolIcon = japan.locator(".profile-symbol .icon");
+    const flagEmoji = "\u{1F1FA}\u{1F1F3}";
+    const joinedEmoji = "\u{1F469}\u{1F3FD}\u200D\u{1F4BB}";
+    assert.equal(await emojiInput.inputValue(), "", "an existing profile acquired an emoji");
+    await emojiInput.fill(flagEmoji);
+    await page.keyboard.press("Escape");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), "", "a cancelled emoji draft was saved");
+    await emojiInput.fill(flagEmoji);
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
+    assert.equal(await rowEmoji.textContent(), flagEmoji, "setting an emoji did not update the existing row");
+    assert.equal(await rowEmoji.isVisible(), true);
+    assert.equal(await rowProtocolIcon.isVisible(), false, "the emoji did not replace the protocol icon");
+    assert.match(await japan.getAttribute("aria-label"), /Japan.*WireGuard/, "emoji replaced the useful row name");
+    assert.equal(await rowEmoji.evaluate(async node => {
+      const font = `48px ${getComputedStyle(node).fontFamily}`;
+      await document.fonts.load(font, node.textContent);
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 64;
+      const context = canvas.getContext("2d");
+      context.font = font;
+      context.fillText(node.textContent, 0, 52);
+      const pixels = context.getImageData(0, 0, 64, 64).data;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index + 3] && pixels[index + 2] > pixels[index] + 40) return true;
+      }
+      return false;
+    }), true, "the blue flag rendered as missing or monochrome glyphs");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), flagEmoji, "the editor reopened with stale emoji metadata");
+    await emojiInput.fill(joinedEmoji);
+    metadataFailure = true;
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.id === "edit-error");
+    assert.equal(await emojiInput.inputValue(), joinedEmoji, "a save failure discarded the emoji draft");
+    assert.equal(await rowEmoji.textContent(), flagEmoji, "a rejected draft changed the row");
+    metadataFailure = false;
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
+    assert.equal(await rowEmoji.textContent(), joinedEmoji, "updating an emoji left the reused row stale or split a sequence");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), joinedEmoji, "the updated emoji was not preserved");
+    await emojiInput.fill("");
+    await page.getByRole("button", { name: "Save metadata", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
+    assert.equal(await rowEmoji.isVisible(), false, "clearing an emoji left it visible");
+    assert.equal(await rowProtocolIcon.isVisible(), true, "clearing an emoji did not restore the protocol icon");
+    assert.equal(await rowProtocolIcon.locator("use").getAttribute("href"), "#icon-wireguard");
+    await page.locator('[data-detail-action="edit"]').click();
+    assert.equal(await emojiInput.inputValue(), "", "the cleared emoji returned when reopening the editor");
     await page.keyboard.press("Escape");
     assert.equal(await page.evaluate(() => document.activeElement?.dataset?.detailAction), "edit");
 

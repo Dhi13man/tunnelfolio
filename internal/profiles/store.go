@@ -287,7 +287,7 @@ func (s *Store) SetConnection(desiredProfile string, connectedAt int64, addRecen
 }
 
 func (s *Store) UpdateMetadata(id string, patch MetadataPatch) (Profile, error) {
-	if patch.DisplayName == nil && patch.Group == nil && patch.Location == nil && !patch.ClearLocation {
+	if patch.DisplayName == nil && patch.Group == nil && patch.Location == nil && !patch.ClearLocation && patch.Emoji == nil && !patch.ClearEmoji {
 		return Profile{}, errors.New("metadata patch is empty")
 	}
 	var updated Profile
@@ -307,8 +307,13 @@ func (s *Store) UpdateMetadata(id string, patch MetadataPatch) (Profile, error) 
 			} else if patch.Location != nil {
 				manifest.Profiles[index].Location = *patch.Location
 			}
+			if patch.ClearEmoji {
+				manifest.Profiles[index].Emoji = ""
+			} else if patch.Emoji != nil {
+				manifest.Profiles[index].Emoji = *patch.Emoji
+			}
 			updated = manifest.Profiles[index]
-			return ValidateMetadata(Metadata{DisplayName: updated.DisplayName, Group: updated.Group, Location: updated.Location})
+			return ValidateMetadata(Metadata{DisplayName: updated.DisplayName, Group: updated.Group, Location: updated.Location, Emoji: updated.Emoji})
 		}
 		return ErrNotFound
 	})

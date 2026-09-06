@@ -322,7 +322,7 @@ func (s *ImportService) Commit(request CommitRequest) (CommitResult, error) {
 		metadata := request.Metadata[index]
 		profile := Profile{
 			ID: record.ID, Protocol: record.Protocol, DisplayName: metadata.DisplayName,
-			Group: metadata.Group, Location: metadata.Location, Identifier: record.Identifier,
+			Group: metadata.Group, Location: metadata.Location, Emoji: metadata.Emoji, Identifier: record.Identifier,
 			OriginalFilename: request.Files[index].Name, ImportedAt: s.now().UTC(),
 			ContentSHA256: record.digest, WireGuardPublicKeySHA256: record.wireGuardPublicKeyDigest,
 		}
@@ -596,6 +596,7 @@ func DecodeMetadataDocument(data []byte) (map[int]Metadata, error) {
 		DisplayName string `json:"display_name"`
 		Group       string `json:"group"`
 		Location    string `json:"location"`
+		Emoji       string `json:"emoji"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -617,7 +618,7 @@ func DecodeMetadataDocument(data []byte) (map[int]Metadata, error) {
 			return nil, errors.New("metadata keys must be canonical file ordinals")
 		}
 		value := raw[key]
-		result[ordinal] = Metadata{DisplayName: value.DisplayName, Group: value.Group, Location: value.Location}
+		result[ordinal] = Metadata{DisplayName: value.DisplayName, Group: value.Group, Location: value.Location, Emoji: value.Emoji}
 	}
 	return result, nil
 }

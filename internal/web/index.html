@@ -302,6 +302,11 @@
       </header>
       <div id="edit-error" class="local-message local-message-error" role="alert" tabindex="-1" hidden></div>
       <div class="field"><label for="edit-name">Display name</label><input id="edit-name" type="text" maxlength="512" required></div>
+      <div class="field">
+        <label for="edit-emoji">Emoji <span class="muted">(optional)</span></label>
+        <input id="edit-emoji" type="text" aria-describedby="edit-emoji-hint" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p id="edit-emoji-hint" class="field-hint">Clear to restore the default tunnel icon.</p>
+      </div>
       <div class="field"><label for="edit-group">Group</label><input id="edit-group" type="text" maxlength="256" required></div>
       <div class="field"><label for="edit-location">Location <span class="muted">(optional)</span></label><input id="edit-location" type="text" maxlength="320"></div>
       <div class="dialog-actions"><button class="button button-primary" type="submit">Save metadata</button></div>

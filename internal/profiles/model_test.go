@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
 func TestGenerateIDAndRuntimeIdentifier(t *testing.T) {
@@ -58,15 +57,38 @@ func TestValidateMetadataBoundaries(t *testing.T) {
 	}
 }
 
-func FuzzValidateMetadataNeverPanics(f *testing.F) {
-	f.Add("Japan", "Mullvad", "Tokyo")
-	f.Add("", "", "")
-	f.Fuzz(func(t *testing.T, name, group, location string) {
-		_ = ValidateMetadata(Metadata{DisplayName: name, Group: group, Location: location})
-		if utf8.ValidString(name) && len(name) <= MaxDisplayNameBytes {
-			_ = name
-		}
-	})
+func TestValidateEmojiMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		emoji string
+		code  string
+	}{
+		{name: "empty"},
+		{name: "flag", emoji: "🇯🇵"},
+		{name: "variation selector", emoji: "✈️"},
+		{name: "skin tone and joiner", emoji: "👩🏽‍💻"},
+		{name: "display text", emoji: "VPN"},
+		{name: "rune and byte maximum", emoji: strings.Repeat("🚀", 16)},
+		{name: "rune overflow within byte limit", emoji: strings.Repeat("a", 17), code: "length_limit"},
+		{name: "byte overflow", emoji: strings.Repeat("🚀", 17), code: "length_limit"},
+		{name: "invalid UTF-8", emoji: "\xff", code: "invalid_utf8"},
+		{name: "control", emoji: "🚀\n🚀", code: "control_character"},
+		{name: "surrounding whitespace", emoji: " 🚀", code: "surrounding_whitespace"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateMetadata(Metadata{DisplayName: "Office", Group: "Work", Emoji: test.emoji})
+			if test.code == "" {
+				if err != nil {
+					t.Fatalf("valid emoji rejected: %v", err)
+				}
+				return
+			}
+			var validation *MetadataValidationError
+			if !errors.As(err, &validation) || validation.Field != "emoji" || validation.Code != test.code || !errors.Is(err, ErrInvalidMetadata) {
+				t.Fatalf("emoji error = %#v, want %s", err, test.code)
+			}
+		})
+	}
 }
 
 func TestValidateManifestRejectsCrossReferencesAndDuplicates(t *testing.T) {

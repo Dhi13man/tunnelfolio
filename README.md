@@ -12,14 +12,14 @@ Import profiles, organize them into Groups, and connect or switch the host's sin
 > [!WARNING]
 > Tunnelfolio runs with root network authority. A profile can change the host's routes and DNS. Import only profiles you trust, keep the application on loopback, and put an authenticated same-host HTTPS proxy in front of mutable deployments.
 
-![Tunnelfolio's graphite-and-copper library with compact host status and eight visible profiles](docs/screenshots/folio-desk.png)
+![Tunnelfolio Folio Desk interface with profile index, library, and selected-profile detail](docs/screenshots/folio-desk.png)
 
 ## What v0.1 includes
 
 - Equal OpenVPN and WireGuard support behind one managed library.
 - Browser import for up to 100 self-contained `.ovpn` or `.conf` files per batch.
 - Strict inspection, duplicate detection, explicit trust confirmation, and all-or-none publication.
-- Stable profile identity with editable display name, Group, and optional location.
+- Stable profile identity with editable display name, Group, optional location and emoji.
 - All, Favorites, and Recent views; search; Group, location, and protocol filters.
 - List-first layout with an on-demand inspector, disclosed filters and system light/dark appearance.
 - One-profile connect, same-protocol switch, cross-protocol switch, disconnect, and failed-target restoration.
@@ -104,11 +104,13 @@ The response contains `"live":true`, read-only state, readiness, and availabilit
 4. Review detected protocols, names, Groups, locations, duplicates, and policy findings.
 5. Confirm that you trust the files, then import them.
 6. Select an imported row. Open **Technical details** for its runtime identifier and source filename.
-7. Use **More actions → Edit metadata** to correct its name, Group or location; mark useful profiles as Favorites.
+7. Use **More actions → Edit metadata** to correct its name, Group or location, or add an emoji; mark useful profiles as Favorites.
 8. Connect one known-good profile, then verify **Host tunnel**, protocol-native status, DNS, and outbound reachability.
 9. Exercise a switch and **Disconnect**. If a target fails, confirm the prior tunnel is restored or the interface reports the exact recovery failure.
 
 Import never connects a profile. Tunnelfolio preserves accepted source bytes and stores them under private managed state. It never renders configuration contents, keys, certificates, or content fingerprints in the browser.
+
+An optional emoji replaces a profile's tunnel icon in the library. Paste it into **Edit metadata → Emoji**, or clear the field to restore the default icon. Emoji sequences support up to 16 Unicode code points and 64 UTF-8 bytes; the bundled color font loads locally when needed.
 
 Selecting a row or the host's profile name only opens details; it never connects. **Connection details** exposes transfer evidence and polling controls. Stale or unavailable observations remain visible when collapsed. In Settings, **Save settings** applies the Startup choice; Library maintenance clears Favorites or Recent separately without saving an unsaved Startup choice.
 
@@ -186,4 +188,4 @@ Report vulnerabilities through GitHub private vulnerability reporting as describ
 
 Tunnelfolio is available under the [MIT License](LICENSE).
 
-The embedded UI includes [Manrope under SIL OFL 1.1](internal/web/assets/Manrope-OFL.txt) and [Lucide/Feather icons under ISC/MIT](internal/web/assets/Lucide-LICENSE.txt), served locally without external asset requests.
+The embedded UI includes [Manrope](internal/web/assets/Manrope-OFL.txt) and [Noto Color Emoji](internal/web/assets/NotoColorEmoji-OFL.txt) under SIL OFL 1.1, plus [Lucide/Feather icons under ISC/MIT](internal/web/assets/Lucide-LICENSE.txt), served locally without external asset requests.

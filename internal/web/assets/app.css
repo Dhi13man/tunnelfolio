@@ -6,6 +6,14 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Noto Color Emoji";
+  src: url("/assets/noto-color-emoji.woff2") format("woff2") tech(color-COLRv1);
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light dark;
   --graphite-950: #151716;
@@ -84,6 +92,7 @@
   --page-max: 80rem;
   --inspector-width: 22rem;
   --font-ui: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-emoji: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", var(--font-ui);
   --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   --button-height: var(--size-touch);
   --button-radius: var(--radius-control);
@@ -179,6 +188,7 @@ summary { min-block-size: var(--size-touch); padding-block: var(--space-3); font
 .field label { color: var(--text-secondary); font-size: var(--size-small); font-weight: 650; }
 .field input, .field select, select { min-inline-size: 0; min-block-size: var(--size-touch); max-inline-size: 100%; padding: var(--space-2) var(--space-3); border: var(--line-thin) solid var(--border-control); border-radius: var(--radius-control); background: var(--surface-panel); color: var(--text-primary); }
 .field input, .field select { inline-size: 100%; }
+#edit-emoji { font-family: var(--font-emoji); }
 input::placeholder { color: var(--text-secondary); opacity: 1; }
 input[type="radio"], input[type="checkbox"] { inline-size: var(--size-icon); block-size: var(--size-icon); accent-color: var(--action-fill); flex: none; }
 .search-control { position: relative; }
@@ -195,7 +205,8 @@ input[type="radio"], input[type="checkbox"] { inline-size: var(--size-icon); blo
 .profile-row:first-child .profile-row-button { border-start-start-radius: var(--radius-panel); border-start-end-radius: var(--radius-panel); }
 .profile-row:last-child .profile-row-button { border-end-start-radius: var(--radius-panel); border-end-end-radius: var(--radius-panel); }
 .profile-row-button[data-selected="true"] { border-inline-start-color: var(--action-fill); background: var(--row-selected); }
-.profile-symbol { color: var(--text-secondary); justify-self: center; }
+.profile-symbol { min-inline-size: 0; inline-size: 100%; block-size: var(--size-icon); display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--text-secondary); }
+.profile-emoji { min-inline-size: 0; overflow: hidden; white-space: nowrap; font-family: var(--font-emoji); font-size: var(--size-icon); font-weight: 400; line-height: 1; unicode-bidi: isolate; }
 .profile-copy { min-inline-size: 0; display: grid; gap: 0; }
 .profile-name { min-inline-size: 0; overflow-wrap: anywhere; font-size: var(--size-text); font-weight: 650; }
 .profile-meta { color: var(--text-secondary); font-size: var(--size-small); overflow-wrap: anywhere; }

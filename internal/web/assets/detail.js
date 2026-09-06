@@ -38,6 +38,7 @@ export function createDetailController({ connection, confirm, onChanged, onRemov
   const editTitle = document.querySelector("#edit-title");
   const editError = document.querySelector("#edit-error");
   const editName = document.querySelector("#edit-name");
+  const editEmoji = document.querySelector("#edit-emoji");
   const editGroup = document.querySelector("#edit-group");
   const editLocation = document.querySelector("#edit-location");
   const editSubmit = editForm.querySelector('button[type="submit"]');
@@ -263,6 +264,7 @@ export function createDetailController({ connection, confirm, onChanged, onRemov
     editOpener = opener;
     editError.hidden = true;
     editName.value = profile.display_name;
+    editEmoji.value = profile.emoji || "";
     editGroup.value = profile.group;
     editLocation.value = profile.location || "";
     editDialog.dataset.profileId = profile.id;
@@ -313,7 +315,7 @@ export function createDetailController({ connection, confirm, onChanged, onRemov
     document.querySelector("#edit-close").disabled = true;
     editForm.setAttribute("aria-busy", "true");
     try {
-      const patch = { display_name: editName.value, group: editGroup.value, location: editLocation.value || null };
+      const patch = { display_name: editName.value, emoji: editEmoji.value || null, group: editGroup.value, location: editLocation.value || null };
       const profile = await api.updateMetadata(id, patch);
       replaceProfile(profile);
       editDialog.close("saved");
