@@ -2,6 +2,7 @@
 
 import { api } from "./api.js";
 import { appState, hasFreshAuthority, isReadOnly } from "./state.js";
+import { createProfileSymbol, updateProfileSymbol } from "./profile-symbol.js";
 
 const lifecycleCopy = {
   disconnected: "Disconnected",
@@ -66,6 +67,9 @@ export function createConnectionController({ onStatus, onError, onConnected, onI
   const section = document.querySelector("#current-tunnel");
   const title = document.querySelector("#current-title");
   const profileOpen = document.querySelector("#current-profile-open");
+  const profileNameText = document.querySelector("#current-profile-name");
+  const symbol = createProfileSymbol();
+  profileOpen.prepend(symbol);
   const emptyTitle = document.querySelector("#current-empty-title");
   const stateText = document.querySelector("#current-state");
   const metrics = document.querySelector("#current-metrics");
@@ -104,7 +108,8 @@ export function createConnectionController({ onStatus, onError, onConnected, onI
     const heading = profileName
       ? `${observationAvailable ? "" : "Last known: "}${profileName}`
       : observationAvailable ? lifecycleCopy[lastLifecycle] || "Tunnel status" : "Status unavailable";
-    setText(profileOpen, profileName ? heading : "");
+    setText(profileNameText, profileName ? heading : "");
+    if (profileName) updateProfileSymbol(symbol, status.profile);
     setText(emptyTitle, profileName ? "" : heading);
     profileOpen.hidden = !profileName;
     emptyTitle.hidden = !!profileName;

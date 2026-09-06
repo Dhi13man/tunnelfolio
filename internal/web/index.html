@@ -69,7 +69,7 @@
     <div class="current-heading">
       <h2 id="current-region-title" class="route-label">Host tunnel</h2>
       <p id="current-title" class="current-name" tabindex="-1">
-        <button id="current-profile-open" class="current-name-action" type="button" hidden></button>
+        <button id="current-profile-open" class="current-name-action" type="button" hidden><span id="current-profile-name"></span></button>
         <span id="current-empty-title">Checking status</span>
       </p>
       <p id="current-state">Reading protocol state…</p>
@@ -108,9 +108,9 @@
       <form id="profile-filters" class="library-filters" role="search">
         <fieldset id="view-filter" class="view-filter">
           <legend class="sr-only">Show profiles</legend>
-          <label><input type="radio" name="profile-view" value="all" checked><span>All</span></label>
           <label><input type="radio" name="profile-view" value="favorites"><span>Favorites</span></label>
           <label><input type="radio" name="profile-view" value="recent"><span>Recent</span></label>
+          <label><input type="radio" name="profile-view" value="all" checked><span>All</span></label>
         </fieldset>
         <div class="search-filter-row">
           <div class="field field-grow">
@@ -147,7 +147,6 @@
         <div id="active-filters" class="active-filters" hidden></div>
       </form>
       <p id="library-context" class="library-context" hidden></p>
-      <a id="skip-profile-list" class="inline-skip" href="#detail-title" hidden>Skip profile list</a>
       <div id="library-error" class="local-message" hidden>
         <h3 tabindex="-1">Profiles could not be loaded</h3>
         <p>Your current tunnel status is still available. Refresh the library to try again.</p>
@@ -170,8 +169,8 @@
 
     <section id="detail-screen" class="profile-detail" aria-labelledby="detail-title">
       <button id="detail-back" class="button button-quiet detail-back" type="button">
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-arrow-left"/></svg>
-        Return to profiles
+        <svg class="icon" aria-hidden="true" focusable="false"><use id="detail-back-icon" href="#icon-close"/></svg>
+        <span id="detail-back-label">Close details</span>
       </button>
       <div id="detail-content">
         <h2 id="detail-title" tabindex="-1">No profile selected</h2>

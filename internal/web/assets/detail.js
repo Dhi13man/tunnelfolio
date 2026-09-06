@@ -2,6 +2,7 @@
 
 import { api } from "./api.js";
 import { appState, hasFreshAuthority, isReadOnly, profileByID, removeProfileState, replaceProfile } from "./state.js";
+import { createProfileSymbol, updateProfileSymbol } from "./profile-symbol.js";
 
 function element(name, className, text) {
   const node = document.createElement(name);
@@ -77,7 +78,7 @@ export function createDetailController({ connection, confirm, onChanged, onRemov
       empty(appState.selectedID ? "The selected profile is no longer in this library." : undefined);
       return;
     }
-    const metadata = JSON.stringify([profile.display_name, profile.protocol, profile.group, profile.location, profile.identifier, profile.original_filename, profile.imported_at]);
+    const metadata = JSON.stringify([profile.display_name, profile.emoji, profile.protocol, profile.group, profile.location, profile.identifier, profile.original_filename, profile.imported_at]);
     if (renderedID === profile.id && renderedMetadata === metadata) {
       updateStatus();
       return;
@@ -94,6 +95,9 @@ export function createDetailController({ connection, confirm, onChanged, onRemov
     const heading = element("h2", "detail-title");
     heading.id = "detail-title";
     heading.tabIndex = -1;
+    const symbol = createProfileSymbol();
+    updateProfileSymbol(symbol, profile);
+    heading.append(symbol);
     heading.append(element("span", "sr-only", "Profile details: "), document.createTextNode(profile.display_name));
     container.append(heading);
 
@@ -318,6 +322,7 @@ export function createDetailController({ connection, confirm, onChanged, onRemov
       const patch = { display_name: editName.value, emoji: editEmoji.value || null, group: editGroup.value, location: editLocation.value || null };
       const profile = await api.updateMetadata(id, patch);
       replaceProfile(profile);
+      if (appState.status?.profile?.id === id) connection.render({ ...appState.status, profile });
       editDialog.close("saved");
       if (appState.selectedID === id) render(profile);
       onChanged();

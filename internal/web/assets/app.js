@@ -126,12 +126,10 @@ function selectProfile(profile, { recordHistory = true, focus = true } = {}) {
 }
 
 function returnToLibrary({ recordHistory = true, focus = true } = {}) {
-  if (recordHistory && window.history.state?.screen === "detail") {
-    window.history.back();
-    return;
-  }
+  const goBack = recordHistory && window.history.state?.screen === "detail";
   main.dataset.screen = "library";
-  if (window.history.state?.screen === "detail") window.history.replaceState({ screen: "library" }, "");
+  if (goBack) window.history.back();
+  else if (window.history.state?.screen === "detail") window.history.replaceState({ screen: "library" }, "");
   library.render();
   library.restoreSelectedRow({ focus });
 }
@@ -360,29 +358,23 @@ function createSettingsController() {
 }
 
 createSettingsController();
-document.querySelector("#skip-profile-list").addEventListener("click", event => {
-  event.preventDefault();
-  const profile = profileByID(appState.selectedID);
-  if (profile) selectProfile(profile);
-});
 
 window.addEventListener("popstate", event => {
   const profile = event.state?.profile ? profileByID(event.state.profile) : null;
   if (profile) selectProfile(profile, { recordHistory: false });
-  else {
+  else if (main.dataset.screen === "detail") {
     if (event.state?.screen === "detail") window.history.replaceState({ screen: "library" }, "");
     returnToLibrary({ recordHistory: false });
   }
 });
-narrow.addEventListener("change", () => {
-  if (main.dataset.screen === "detail") {
-    if (narrow.matches) {
-      if (!document.querySelector("dialog[open]")) detail.focusHeading();
-    } else {
-      library.restoreSelectedRow({ focus: false });
-    }
-  }
-});
+function updateDetailNavigation() {
+  document.querySelector("#detail-back-label").textContent = narrow.matches ? "Back to profiles" : "Close details";
+  document.querySelector("#detail-back-icon").setAttribute("href", narrow.matches ? "#icon-arrow-left" : "#icon-close");
+  if (narrow.matches && main.dataset.screen === "detail" && document.activeElement?.closest("#library-screen")) detail.focusHeading();
+}
+narrow.addEventListener("change", updateDetailNavigation);
+updateDetailNavigation();
+window.history.scrollRestoration = "manual";
 window.history.replaceState({ screen: "library" }, "");
 
 async function initialize() {

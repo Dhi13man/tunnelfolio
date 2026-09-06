@@ -260,6 +260,7 @@ async function handleAPI(request, response, url) {
     const patch = JSON.parse((await readBody(request)).toString("utf8"));
     const index = profiles.findIndex(item => item.id === id);
     profiles[index] = { ...profiles[index], display_name: patch.display_name, group: patch.group, location: patch.location || "", emoji: Object.hasOwn(patch, "emoji") ? patch.emoji || "" : profiles[index].emoji };
+    if (status.profile?.id === id) status = { ...status, profile: profiles[index] };
     return json(response, 200, profiles[index]);
   }
   if (match && request.method === "DELETE") {
@@ -343,7 +344,7 @@ async function assertNoHorizontalOverflow(page, state) {
     offenders: [...document.querySelectorAll("body *")]
       .filter(node => !node.matches(".sr-only"))
       .map(node => ({ selector: `${node.tagName.toLowerCase()}#${node.id}.${node.className}`, left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right, scroll: node.scrollWidth, width: node.clientWidth }))
-      .filter(node => node.right > document.documentElement.clientWidth + 1 || node.left < -1 || node.scroll > node.width + 1)
+      .filter(node => node.right > document.documentElement.clientWidth + 1 || node.left < -1 || (node.width > 0 && node.scroll > node.width + 1))
       .slice(0, 10),
   }));
   assert.ok(dimensions.scroll <= dimensions.width + 1, `${state}: horizontal overflow ${dimensions.scroll} > ${dimensions.width}; ${JSON.stringify(dimensions.offenders)}`);
@@ -438,6 +439,53 @@ async function waitImportOutcome(page) {
     profileGate.resolve();
     profileGate = null;
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
+    assert.deepEqual(await page.locator("#view-filter label").allTextContents(), ["Favorites", "Recent", "All"]);
+    for (const scenario of [
+      { favorites: [profiles[0].id], recents: [profiles[1].id], view: "favorites", ids: [profiles[0].id] },
+      { favorites: [], recents: [profiles[1].id], view: "recent", ids: [profiles[1].id] },
+      { favorites: [], recents: [], view: "all", ids: profiles.map(item => item.id) },
+    ]) {
+      preferences = { favorites: scenario.favorites, recents: scenario.recents, startup_mode: "manual" };
+      await page.reload({ waitUntil: "networkidle" });
+      assert.equal(await page.locator('input[name="profile-view"]:checked').inputValue(), scenario.view);
+      assert.deepEqual(await page.locator(".profile-row-button").evaluateAll(rows => rows.map(row => row.dataset.profileId)), scenario.ids);
+      if (scenario.view === "favorites") {
+        await page.getByRole("radio", { name: "Favorites", exact: true }).focus();
+        await page.keyboard.press("ArrowRight");
+        assert.equal(await page.getByRole("radio", { name: "Recent", exact: true }).isChecked(), true);
+        assert.equal(await page.locator(".profile-row-button").getAttribute("data-profile-id"), profiles[1].id);
+        await page.keyboard.press("ArrowRight");
+        assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true);
+        assert.equal(await page.locator(".profile-row-button").count(), 3);
+        await page.locator(".profile-row-button").first().click();
+        await page.locator("#detail-back").click();
+        assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true, "rerender overrode a manually chosen view");
+        profileGate = deferred();
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await page.getByRole("radio", { name: "All", exact: true }).click();
+        profileGate.resolve();
+        profileGate = null;
+        await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
+        assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true, "late initial data overrode an explicit All choice");
+      }
+    }
+    const disclosure = page.locator("#connection-details");
+    assert.equal(await disclosure.evaluate(node => node.open), false);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const below = await disclosure.evaluate(node => {
+        const summary = node.getBoundingClientRect();
+        const heading = document.querySelector(".current-heading").getBoundingClientRect();
+        return summary.top >= Math.max(heading.bottom, document.querySelector(".current-actions").getBoundingClientRect().bottom) && Math.abs(summary.left - heading.left) <= 1;
+      });
+      assert.equal(below, true, "connection details must sit below the host summary and actions");
+      await disclosure.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      assert.equal(await page.locator("#status-refresh").isVisible(), true);
+      await page.keyboard.press("Enter");
+      assert.equal(await page.locator("#status-refresh").isVisible(), false);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     assert.equal(await page.locator(".profile-row-button").count(), 3, "each profile must render as one row button");
     assert.equal(await page.evaluate(() => globalThis.injected), undefined, "profile metadata executed script");
@@ -502,6 +550,11 @@ async function waitImportOutcome(page) {
     const emojiInput = page.getByLabel("Emoji (optional)", { exact: true });
     const rowEmoji = japan.locator(".profile-emoji");
     const rowProtocolIcon = japan.locator(".profile-symbol .icon");
+    const detailEmoji = page.locator("#detail-title .profile-emoji");
+    const currentEmoji = page.locator("#current-profile-open .profile-emoji");
+    for (const panel of ["#detail-title", "#current-profile-open"]) {
+      assert.equal(await page.locator(`${panel} .profile-symbol .icon`).isVisible(), true, "profile without an emoji must show its protocol icon");
+    }
     const flagEmoji = "\u{1F1FA}\u{1F1F3}";
     const joinedEmoji = "\u{1F469}\u{1F3FD}\u200D\u{1F4BB}";
     assert.equal(await emojiInput.inputValue(), "", "an existing profile acquired an emoji");
@@ -516,6 +569,10 @@ async function waitImportOutcome(page) {
     assert.equal(await rowEmoji.isVisible(), true);
     assert.equal(await rowProtocolIcon.isVisible(), false, "the emoji did not replace the protocol icon");
     assert.match(await japan.getAttribute("aria-label"), /Japan.*WireGuard/, "emoji replaced the useful row name");
+    assert.equal(await detailEmoji.textContent(), flagEmoji, "selected panel missed the saved emoji");
+    assert.equal(await currentEmoji.textContent(), flagEmoji, "connected panel missed the saved emoji");
+    await page.locator("#status-refresh").click();
+    assert.equal(await currentEmoji.textContent(), flagEmoji, "status refresh reverted the saved emoji");
     assert.equal(await rowEmoji.evaluate(async node => {
       const font = `48px ${getComputedStyle(node).fontFamily}`;
       await document.fonts.load(font, node.textContent);
@@ -542,6 +599,8 @@ async function waitImportOutcome(page) {
     await page.getByRole("button", { name: "Save metadata", exact: true }).click();
     await page.waitForFunction(() => !document.querySelector("#edit-dialog").open);
     assert.equal(await rowEmoji.textContent(), joinedEmoji, "updating an emoji left the reused row stale or split a sequence");
+    assert.equal(await detailEmoji.textContent(), joinedEmoji, "selected panel retained the old emoji");
+    assert.equal(await currentEmoji.textContent(), joinedEmoji, "connected panel retained the old emoji");
     await page.locator('[data-detail-action="edit"]').click();
     assert.equal(await emojiInput.inputValue(), joinedEmoji, "the updated emoji was not preserved");
     await emojiInput.fill("");
@@ -550,6 +609,10 @@ async function waitImportOutcome(page) {
     assert.equal(await rowEmoji.isVisible(), false, "clearing an emoji left it visible");
     assert.equal(await rowProtocolIcon.isVisible(), true, "clearing an emoji did not restore the protocol icon");
     assert.equal(await rowProtocolIcon.locator("use").getAttribute("href"), "#icon-wireguard");
+    for (const panel of ["#detail-title", "#current-profile-open"]) {
+      assert.equal(await page.locator(`${panel} .profile-emoji`).isVisible(), false);
+      assert.equal(await page.locator(`${panel} .profile-symbol .icon`).isVisible(), true, "clearing an emoji must restore panel protocol icons");
+    }
     await page.locator('[data-detail-action="edit"]').click();
     assert.equal(await emojiInput.inputValue(), "", "the cleared emoji returned when reopening the editor");
     await page.keyboard.press("Escape");
@@ -612,6 +675,7 @@ async function waitImportOutcome(page) {
     await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').click();
     await page.locator('[data-detail-action="favorite"]').click();
     assert.equal(preferences.recents[0], "tf_cccccccccccccccccccccccccc", "favorite save erased the server's recent history");
+    assert.equal(await page.getByRole("radio", { name: "All", exact: true }).isChecked(), true, "connection or favorite refresh changed the user's view");
 
     await tabTo(page, "#import-open", { reverse: true, limit: 120 });
     await page.keyboard.press("Enter");
@@ -670,6 +734,7 @@ async function waitImportOutcome(page) {
     status = { ...status, connected: true, lifecycle: "active", observation_available: true, profile: profiles[1], protocol_status: { state: "interface_active", received_bytes: 15360, sent_bytes: 4096, peers: [{ endpoint: "198.51.100.8:51820", latest_handshake: 0, received_bytes: 15360, sent_bytes: 4096 }] }, protocols: { openvpn: { available: false, reason: "openvpn was not found" }, wireguard: { available: true } } };
     profiles[0] = { ...profiles[0], available: false, unavailable_reason: "OpenVPN is unavailable on this host." };
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#current-state")?.textContent === "WireGuard interface active · no handshake observed");
     assert.match(await page.locator("#current-state").textContent(), /no handshake observed/);
     assert.match(await page.locator("#openvpn-availability").textContent(), /unavailable|not found/);
@@ -857,6 +922,7 @@ async function waitImportOutcome(page) {
     preferences = { favorites: [profiles[1].id], recents: [profiles[1].id], startup_mode: "restore" };
     status = { ...status, connected: true, lifecycle: "active", observation_available: true, profile: profiles[1], protocol_status: { state: "interface_active", received_bytes: 15360, sent_bytes: 4096, peers: [{ endpoint: "198.51.100.8:51820", latest_handshake: fixtureEpochSeconds, received_bytes: 15360, sent_bytes: 4096 }] } };
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
     await page.locator('[data-profile-id="tf_cccccccccccccccccccccccccc"]').click();
     await page.emulateMedia({ forcedColors: "none", reducedMotion: "reduce" });
@@ -889,6 +955,8 @@ async function waitImportOutcome(page) {
     await scan(page, "library load failure");
     profileFailure = false;
     await page.locator("#library-retry").click();
+    await page.waitForFunction(() => document.querySelector('input[name="profile-view"][value="favorites"]').checked);
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "3 profiles");
 
     await page.setViewportSize({ width: 568, height: 320 });
@@ -951,6 +1019,7 @@ async function waitImportOutcome(page) {
     preferences = { favorites: [profiles[0].id, profiles[24].id, profiles[49].id], recents: profiles.slice(45).map(item => item.id), startup_mode: "manual" };
     await page.setViewportSize({ width: 375, height: 667 });
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "50 profiles");
     assert.equal(await page.locator(".profile-row-button").count(), 50);
     assert.equal(await page.locator("#group-filter").count(), 1, "Group filtering must remain one native control");
@@ -965,33 +1034,26 @@ async function waitImportOutcome(page) {
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "library");
     assert.equal(await page.evaluate(() => document.activeElement?.dataset?.profileId), profiles[49].id);
-    await page.keyboard.press("Shift+Tab");
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "skip-profile-list", "narrow keyboard path did not reach Skip profile list from the selected row");
-    assert.deepEqual(await page.evaluate(() => history.state), { screen: "library" });
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "detail" && document.activeElement?.id === "detail-title");
-    assert.deepEqual(await page.evaluate(() => history.state), { screen: "detail", profile: profiles[49].id });
     assert.match(await page.locator("#detail-title").textContent(), /Profile 050/);
-    await page.keyboard.press("Shift+Tab");
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "detail-back");
-    await page.keyboard.press("Enter");
-    await page.waitForFunction(() => document.querySelector("#main-content")?.dataset.screen === "library" && document.activeElement?.dataset?.profileId);
+    assert.equal(await page.getByRole("button", { name: "Back to profiles", exact: true }).isVisible(), true);
+    await page.goBack();
+    await assertVisibleFocus(page, `[data-profile-id="${profiles[49].id}"]`, "browser Back returns to the selected row");
     await assertNoHorizontalOverflow(page, "50-profile narrow fixture");
-    await scan(page, "50-profile narrow list detail skip and return");
+    await scan(page, "50-profile narrow list and detail navigation");
     await page.locator(".profile-row-button").click();
-    await page.evaluate(() => window.addEventListener("popstate", () => {
-      document.querySelector("#skip-profile-list").focus();
-    }, { once: true }));
     await page.locator("#detail-back").click();
-    await page.waitForFunction(() => document.querySelector("#main-content").dataset.screen === "library");
+    await page.locator("#profile-search").focus();
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.equal(await page.evaluate(() => document.activeElement.id), "skip-profile-list", "deferred Return restoration stole subsequent user focus");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "profile-search", "closing details stole subsequent user focus");
 
     profiles = Array.from({ length: 100 }, (_, index) => profile(stableID(index), index % 2 ? "wireguard" : "openvpn", `Profile ${String(index + 1).padStart(3, "0")}`, `Group ${String(index + 1).padStart(3, "0")}`, index % 2 ? "JP" : "DE", index > 94));
     status = { ...status, connected: true, lifecycle: "active", profile: profiles[49], protocol_status: { state: "interface_active", received_bytes: 1, sent_bytes: 2, peers: [] } };
     preferences = { favorites: [profiles[0].id, profiles[49].id, profiles[99].id], recents: profiles.slice(95).map(item => item.id), startup_mode: "manual" };
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.reload({ waitUntil: "networkidle" });
+    await page.getByRole("radio", { name: "All", exact: true }).check();
     await page.waitForFunction(() => document.querySelector("#result-count")?.textContent === "100 profiles");
     assert.equal(await page.locator(".profile-row-button").count(), 100);
     assert.equal(await page.locator("#group-filter option").count(), 101);
@@ -1005,6 +1067,12 @@ async function waitImportOutcome(page) {
       await page.locator("#detail-back").click();
       await assertVisibleFocus(page, `[data-profile-id="${profiles[index].id}"]`, `wide row ${index + 1} Return`);
     }
+    await page.locator(".profile-row-button").first().click();
+    await page.locator(".profile-row-button").last().click();
+    await page.getByRole("button", { name: "Close details", exact: true }).click();
+    await page.waitForFunction(() => history.state?.screen === "library");
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await assertVisibleFocus(page, `[data-profile-id="${profiles[99].id}"]`, "closing after changing selection preserves the last row, not the history entry's first row");
     await page.setViewportSize({ width: 320, height: 568 });
     for (const index of [0, 49, 99]) {
       for (const returnMethod of ["Back control", "browser Back"]) {

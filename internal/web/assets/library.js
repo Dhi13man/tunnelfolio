@@ -1,6 +1,7 @@
 "use strict";
 
 import { appState, isReadOnly, profileByID } from "./state.js";
+import { createProfileSymbol, updateProfileSymbol } from "./profile-symbol.js";
 
 function protocolName(protocol) {
   return protocol === "wireguard" ? "WireGuard" : "OpenVPN";
@@ -55,7 +56,6 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
   const protocol = document.querySelector("#protocol-filter");
   const search = document.querySelector("#profile-search");
   const views = [...document.querySelectorAll('input[name="profile-view"]')];
-  const skip = document.querySelector("#skip-profile-list");
   const firstUse = document.querySelector("#library-empty");
   const filteredEmpty = document.querySelector("#filtered-empty");
   const loadError = document.querySelector("#library-error");
@@ -66,6 +66,7 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
   const chips = document.querySelector("#active-filters");
   const context = document.querySelector("#library-context");
   let failed = false;
+  let viewInitialized = false;
   let chipSignature = "";
 
   function refreshFacet(select, key, label) {
@@ -123,7 +124,6 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
       firstUse.hidden = true;
       filteredEmpty.hidden = true;
       context.hidden = true;
-      skip.hidden = true;
       return;
     }
     refreshFacet(group, "group", "All groups");
@@ -152,10 +152,7 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
         button.className = "profile-row-button";
         button.dataset.profileId = profile.id;
         button.dataset.focusKey = `profile:${profile.id}`;
-        const symbol = appendText(button, "profile-symbol", "");
-        symbol.setAttribute("aria-hidden", "true");
-        symbol.append(icon(profile.protocol === "wireguard" ? "wireguard" : "openvpn", ""));
-        appendText(symbol, "profile-emoji", "");
+        button.append(createProfileSymbol());
         const copy = appendText(button, "profile-copy", "");
         appendText(copy, "profile-name", "");
         appendText(copy, "profile-meta", "");
@@ -165,12 +162,7 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
         item.append(button);
       }
       const button = item.firstElementChild;
-      const emoji = profile.emoji || "";
-      const symbol = button.querySelector(".profile-symbol");
-      const emojiText = symbol.querySelector(".profile-emoji");
-      if (emojiText.textContent !== emoji) emojiText.textContent = emoji;
-      emojiText.hidden = !emoji;
-      symbol.querySelector(".icon").toggleAttribute("hidden", Boolean(emoji));
+      updateProfileSymbol(button.querySelector(".profile-symbol"), profile);
       button.querySelector(".profile-name").textContent = profile.display_name;
       const metadata = button.querySelector(".profile-meta");
       metadata.textContent = [!shared.group && profile.group, !shared.location && profile.location, !shared.protocol && protocolName(profile.protocol)].filter(Boolean).join(" · ");
@@ -187,7 +179,6 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
     firstUse.hidden = anyProfiles || failed;
     filteredEmpty.hidden = !anyProfiles || profiles.length > 0;
     list.hidden = profiles.length === 0;
-    skip.hidden = !appState.selectedID || profiles.length === 0;
     count.textContent = `${profiles.length} ${profiles.length === 1 ? "profile" : "profiles"}`;
     importEmpty.disabled = isReadOnly();
   }
@@ -210,23 +201,18 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
     const button = list.querySelector(`[data-profile-id="${CSS.escape(appState.selectedID)}"]`);
     const target = button || (!list.hidden && list.firstElementChild?.firstElementChild) || document.querySelector(failed && !appState.profiles.length ? "#library-error-title" : appState.profiles.length ? "#filtered-empty-title" : "#library-empty-title") || search;
     const saved = appState.profileScroll || { library: 0, window: 0 };
-    const restoreScroll = () => {
-      document.querySelector("#library-screen").scrollTop = saved.library || 0;
-      window.scrollTo({ top: saved.window || 0, behavior: "instant" });
-      if (focus) {
-        target.focus({ preventScroll: true });
-        const bounds = target.getBoundingClientRect();
-        if (bounds.top < 0 || bounds.bottom > window.innerHeight) target.scrollIntoView({ block: "nearest", behavior: "instant" });
-      }
-    };
-    restoreScroll();
-    requestAnimationFrame(() => {
-      if (!focus || document.activeElement === target) restoreScroll();
-    });
+    document.querySelector("#library-screen").scrollTop = saved.library || 0;
+    window.scrollTo({ top: saved.window || 0, behavior: "instant" });
+    if (focus) {
+      target.focus({ preventScroll: true });
+      const bounds = target.getBoundingClientRect();
+      if (bounds.top < 0 || bounds.bottom > window.innerHeight) target.scrollIntoView({ block: "nearest", behavior: "instant" });
+    }
   }
 
   function clearAllFilters() {
     appState.filters = { view: "all", group: "", location: "", protocol: "", search: "" };
+    viewInitialized = true;
     render();
     search.focus();
   }
@@ -237,9 +223,11 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
   });
   views.forEach(input => input.addEventListener("change", () => {
     if (!input.checked) return;
+    viewInitialized = true;
     appState.filters.view = input.value;
     render();
   }));
+  views.forEach(input => input.addEventListener("click", () => { viewInitialized = true; }));
   group.addEventListener("change", () => { appState.filters.group = group.value; render(); });
   location.addEventListener("change", () => { appState.filters.location = location.value; render(); });
   protocol.addEventListener("change", () => { appState.filters.protocol = protocol.value; render(); });
@@ -255,7 +243,15 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
     updateConnectionMarkers,
     restoreSelectedRow,
     visibleProfileIDs: () => appState.profiles.filter(matches).map(profile => profile.id),
-    fail: value => { failed = value; render(); },
+    fail: value => {
+      failed = value;
+      if (!failed && !viewInitialized) {
+        appState.filters.view = appState.profiles.some(profile => profile.favorite) ? "favorites"
+          : appState.profiles.some(profile => profile.recent) ? "recent" : "all";
+        viewInitialized = true;
+      }
+      render();
+    },
     row: id => list.querySelector(`[data-profile-id="${CSS.escape(id)}"]`),
   };
 }

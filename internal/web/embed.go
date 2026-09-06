@@ -15,7 +15,7 @@ func Asset(name string) ([]byte, string, error) {
 	case "app.css":
 		data, err := files.ReadFile("assets/app.css")
 		return data, "text/css; charset=utf-8", err
-	case "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "state.js":
+	case "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "profile-symbol.js", "state.js":
 		data, err := files.ReadFile("assets/" + name)
 		return data, "text/javascript; charset=utf-8", err
 	case "manrope-latin.woff2", "noto-color-emoji.woff2":

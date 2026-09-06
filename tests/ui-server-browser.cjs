@@ -96,7 +96,7 @@ function privateFile(file, contents) {
     assert.equal(await page.locator("#library-empty").isVisible(), true);
     assert.equal(await page.locator("#import-open").isDisabled(), false);
 
-    for (const asset of ["app.css", "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "state.js", "manrope-latin.woff2", "noto-color-emoji.woff2", "Manrope-OFL.txt", "NotoColorEmoji-OFL.txt", "Lucide-LICENSE.txt"]) {
+    for (const asset of ["app.css", "api.js", "app.js", "connection.js", "detail.js", "import.js", "library.js", "profile-symbol.js", "state.js", "manrope-latin.woff2", "noto-color-emoji.woff2", "Manrope-OFL.txt", "NotoColorEmoji-OFL.txt", "Lucide-LICENSE.txt"]) {
       const assetResponse = await page.request.get(`${origin}/assets/${asset}`);
       assert.equal(assetResponse.status(), 200);
       assert.match(assetResponse.headers()["content-type"], asset.endsWith(".woff2") ? /font\/woff2/ : asset.endsWith(".txt") ? /text\/plain/ : asset.endsWith(".css") ? /text\/css/ : /javascript/);

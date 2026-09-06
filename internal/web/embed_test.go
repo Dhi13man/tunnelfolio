@@ -15,6 +15,7 @@ func TestEmbeddedApplicationBoundary(t *testing.T) {
 		"detail.js":              "text/javascript; charset=utf-8",
 		"import.js":              "text/javascript; charset=utf-8",
 		"library.js":             "text/javascript; charset=utf-8",
+		"profile-symbol.js":      "text/javascript; charset=utf-8",
 		"state.js":               "text/javascript; charset=utf-8",
 		"manrope-latin.woff2":    "font/woff2",
 		"noto-color-emoji.woff2": "font/woff2",
