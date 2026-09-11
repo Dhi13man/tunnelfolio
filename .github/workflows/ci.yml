@@ -232,6 +232,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Fetch pull request base so gitleaks can resolve BASE^
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          git fetch --no-tags origin "$BASE_SHA"
+          git rev-parse --verify "${BASE_SHA}^" >/dev/null 2>&1 \
+            || git fetch --deepen=50 origin "$BASE_REF"
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
