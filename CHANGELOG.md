@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-26
+
+### Changed
+
+- Bump `golang.org/x/sys` from 0.47.0 to 0.48.0.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added
