@@ -18,6 +18,29 @@ Expected service output is `active`. Query `/healthz` through the authenticated 
 
 Query `/api/status` through that proxy before connecting, switching, upgrading, or rolling back. The response distinguishes disconnected, transitional, active, failed, conflict, and unavailable-observation states. A WireGuard interface without a recent handshake is active but has no handshake evidence; do not report it as a proved working tunnel.
 
+## Preserve remote management when routing through a profile
+
+Before activating a full-tunnel profile on a remotely administered host,
+confirm an independent management path or local console access. `wg-quick`
+can install a default-route policy rule ahead of another VPN's bypass rule.
+If the selected peer stops responding, that rule can also strand the
+management VPN's coordination traffic. An active WireGuard interface alone
+does not prove that its peer can carry traffic.
+
+Inspect IPv4 and IPv6 policy rules, the route used by the management agent,
+DNS resolution, a recent tunnel handshake, and management access from a
+second device. If a dedicated management bypass is required, configure and
+test it in the host's network policy before enabling startup restoration.
+Keep application traffic subject to the intended profile policy; do not
+silently fall back to an unprotected uplink when its peer fails.
+
+After restarting either VPN daemon, repeat the off-host access check. If a
+systemd unit starts a management proxy with a CLI such as `tailscale serve`,
+ordering it `After=tailscaled.service` only waits for the daemon process,
+not for an assigned tailnet address. Wait for the management interface to
+be ready and retry transient startup failures. Verify the proxy listener
+and authenticated application from another device, not only locally.
+
 ## Expose Tunnelfolio through a private proxy
 
 Tunnelfolio listens on `127.0.0.1:50001`. Mutable endpoints also require four assertions from a trusted same-host HTTPS proxy:
