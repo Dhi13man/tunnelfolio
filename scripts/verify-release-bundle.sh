@@ -94,7 +94,7 @@ done
 
 expected_licenses="$inspect_root/expected-licenses"
 ./scripts/check-licenses.sh >/dev/null
-GOTOOLCHAIN=go1.27.0 go run github.com/google/go-licenses/v2@v2.0.1 save ./... \
+GOTOOLCHAIN=go1.27.2 go run github.com/google/go-licenses/v2@v2.0.1 save ./... \
   --save_path "$expected_licenses"
 
 for arch in amd64 arm64 armv7; do

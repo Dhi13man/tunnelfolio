@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- Build with Go 1.27.2 and bump `golang.org/x/net` from 0.58.0 to 0.60.0
+  (with `golang.org/x/crypto` 0.57.0 and `golang.org/x/text` 0.42.0) to fix
+  GO-2026-6603, GO-2026-6607, GO-2026-6608, GO-2026-6611, GO-2026-6612,
+  GO-2026-6613 and GO-2026-6617 in `net/http`, HTTP/2, `crypto/tls` and
+  `mime/multipart`.
+
 ## [0.2.1] - 2026-09-26
 
 ### Changed
