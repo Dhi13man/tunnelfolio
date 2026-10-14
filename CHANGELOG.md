@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-14
+
 ### Security
 
 - Build with Go 1.27.2 and bump `golang.org/x/net` from 0.58.0 to 0.60.0
@@ -13,6 +15,10 @@ All notable changes to this project are documented here. The format is based on
   GO-2026-6603, GO-2026-6607, GO-2026-6608, GO-2026-6611, GO-2026-6612,
   GO-2026-6613 and GO-2026-6617 in `net/http`, HTTP/2, `crypto/tls` and
   `mime/multipart`.
+
+### Changed
+
+- Bump `golang.org/x/sys` from 0.48.0 to 0.49.0.
 
 ## [0.2.1] - 2026-09-26
 
