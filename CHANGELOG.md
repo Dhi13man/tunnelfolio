@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Security
+
+- Build with Go 1.27.3 to fix GO-2026-6809 (distrust compromised intermediate
+  certificates in `crypto/x509`).
+
 ## [0.2.2] - 2026-10-14
 
 ### Security
