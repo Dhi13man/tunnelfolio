@@ -44,7 +44,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH="$target_goarch" GOARM="$target_goarm" go build 
   -o "$archive_dir/tunnelfolio" ./cmd/tunnelfolio
 cp LICENSE README.md install.sh tunnelfolio.service tunnelfolio.tmpfiles.conf "$archive_dir/"
 ./scripts/check-licenses.sh >/dev/null
-GOTOOLCHAIN=go1.27.2 go run github.com/google/go-licenses/v2@v2.0.1 save ./... \
+GOTOOLCHAIN=go1.27.3 go run github.com/google/go-licenses/v2@v2.0.1 save ./... \
   --save_path "$archive_dir/THIRD_PARTY_LICENSES"
 tar --sort=name --owner=0 --group=0 --numeric-owner \
   --mtime="@$source_date_epoch" -C dist -czf "$archive_dir.tar.gz" "$archive"

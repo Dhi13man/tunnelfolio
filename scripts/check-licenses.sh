@@ -4,7 +4,7 @@ set -eu
 report=$(mktemp)
 trap 'rm -f "$report"' EXIT HUP INT TERM
 
-GOTOOLCHAIN=go1.27.2 go run github.com/google/go-licenses/v2@v2.0.1 report ./... > "$report"
+GOTOOLCHAIN=go1.27.3 go run github.com/google/go-licenses/v2@v2.0.1 report ./... > "$report"
 awk -F, '
 	NR == FNR {
 		if ($0 !~ /^#/ && NF == 1) allowed[$1] = 1
