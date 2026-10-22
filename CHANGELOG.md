@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-22
+
 ### Security
 
 - Build with Go 1.27.3 to fix GO-2026-6809 (distrust compromised intermediate
