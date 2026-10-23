@@ -155,8 +155,11 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
         button.append(createProfileSymbol());
         const copy = appendText(button, "profile-copy", "");
         appendText(copy, "profile-name", "");
+        // Whitespace-only text nodes are not rendered inside these grid containers, but they
+        // keep the row's text content word-separated so it matches the aria-label below.
+        copy.append(" ");
         appendText(copy, "profile-meta", "");
-        button.append(icon("star", "profile-favorite"));
+        button.append(" ", icon("star", "profile-favorite"));
         appendText(button, "profile-state", "");
         button.addEventListener("click", () => onSelect(profileByID(button.dataset.profileId), button));
         item.append(button);
@@ -193,7 +196,12 @@ export function createLibraryController({ onSelect, onImport, onRetry }) {
       const state = button.querySelector(".profile-state");
       state.textContent = rowState(profile);
       state.hidden = !state.textContent;
-      button.setAttribute("aria-label", [profile.display_name, protocolName(profile.protocol), profile.favorite && "Favorite", appState.selectedID === profile.id && "Selected", rowState(profile)].filter(Boolean).join(" · "));
+      // Keep the visible row text (name, metadata, state) first and in DOM order so the
+      // accessible name contains it (WCAG 2.5.3, axe label-content-name-mismatch).
+      const metadata = button.querySelector(".profile-meta");
+      const visibleMeta = metadata.hidden ? "" : metadata.textContent;
+      const protocol = protocolName(profile.protocol);
+      button.setAttribute("aria-label", [profile.display_name, visibleMeta, state.textContent, !visibleMeta.includes(protocol) && protocol, profile.favorite && "Favorite", appState.selectedID === profile.id && "Selected"].filter(Boolean).join(" · "));
     }
   }
 
