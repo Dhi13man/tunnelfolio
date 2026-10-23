@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-23
+
 ### Fixed
 
 - Profile rows now expose their visible name, metadata and state at the start
