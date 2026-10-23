@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format is based on
   of their accessible name, so speech-input users can activate a row by what
   they see (WCAG 2.5.3; flagged by axe-core 4.14 `label-content-name-mismatch`).
 
+## [0.2.3] - 2026-10-22
+
 ### Security
 
 - Build with Go 1.27.3 to fix GO-2026-6809 (distrust compromised intermediate
