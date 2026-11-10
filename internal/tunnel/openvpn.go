@@ -46,6 +46,7 @@ type OpenVPNProcessState struct {
 type OpenVPNBackend struct {
 	opts OpenVPNBackendOptions
 
+	disableDCO     bool
 	mu             sync.Mutex
 	proc           *openVPNProcess
 	lastExitError  string
@@ -100,7 +101,7 @@ func NewOpenVPNBackend(opts OpenVPNBackendOptions) (*OpenVPNBackend, error) {
 	if opts.ReadIdentity == nil {
 		opts.ReadIdentity = readProcessIdentity
 	}
-	return &OpenVPNBackend{opts: opts}, nil
+	return &OpenVPNBackend{opts: opts, disableDCO: openVPNBinarySupportsDisableDCO(opts.Command)}, nil
 }
 
 func (b *OpenVPNBackend) Activate(ctx context.Context, profilePath, providerDir string) error {
@@ -117,7 +118,15 @@ func (b *OpenVPNBackend) Activate(ctx context.Context, profilePath, providerDir 
 		b.mu.Unlock()
 		return fmt.Errorf("create OpenVPN diagnostic pipe: %w", err)
 	}
-	command := exec.Command(b.opts.Command, "--config", profilePath, "--verb", "3", "--suppress-timestamps")
+	args := []string{"--config", profilePath, "--verb", "3", "--suppress-timestamps"}
+	if b.disableDCO {
+		// OpenVPN 2.7 enables Data Channel Offload by default, which creates
+		// ovpn-dco interfaces instead of the classic TUN/TAP device named in
+		// the profile. Tunnelfolio tracks that device name, so prefer TUN/TAP
+		// when the installed binary understands --disable-dco.
+		args = append(args, "--disable-dco")
+	}
+	command := exec.Command(b.opts.Command, args...)
 	command.Dir = providerDir
 	command.Stdout, command.Stderr = writer, writer
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Pdeathsig: syscall.SIGKILL}
@@ -566,6 +575,38 @@ func safeProcessError(err error) string {
 		return fmt.Sprintf("exit status %d", exitErr.ExitCode())
 	}
 	return "process wait failed"
+}
+
+func openVPNBinarySupportsDisableDCO(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	const (
+		needle = "--disable-dco"
+		limit  = 16 << 20
+	)
+	buf := make([]byte, 256<<10)
+	overlap := make([]byte, 0, len(needle))
+	read := 0
+	for read < limit {
+		n, err := file.Read(buf)
+		if n > 0 {
+			chunk := append(overlap, buf[:n]...)
+			if bytes.Contains(chunk, []byte(needle)) {
+				return true
+			}
+			if len(chunk) >= len(needle) {
+				overlap = append(overlap[:0], chunk[len(chunk)-len(needle)+1:]...)
+			}
+			read += n
+		}
+		if err != nil {
+			break
+		}
+	}
+	return false
 }
 
 func validateOpenVPNCommand(path string) error {

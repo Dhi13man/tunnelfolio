@@ -121,7 +121,6 @@ done
 	printf '%s\n' \
 		'client' \
 		'dev tunclient' \
-		'disable-dco' \
 		'proto udp' \
 		'remote 127.0.0.1 11940' \
 		'nobind' \
@@ -335,7 +334,7 @@ wait_for_lifecycle() {
 }
 
 openvpn_client_pids() {
-	pgrep -f "^.*openvpn --config $fixture/state/library/\\.executions/exec-[^/]*/profile\\.ovpn --verb 3 --suppress-timestamps$" || true
+	pgrep -f "^.*openvpn --config $fixture/state/library/\\.executions/exec-[^/]*/profile\\.ovpn --verb 3 --suppress-timestamps\\( --disable-dco\\)\?$" || true
 }
 
 wait_for_openvpn_absence() {
