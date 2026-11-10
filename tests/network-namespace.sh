@@ -196,31 +196,18 @@ request_form() {
 
 # wg-quick strip (used during WireGuard inspect) runs `stat -c '0%#a'`.
 # Ubuntu 26's default uutils stat can reject or misformat that conversion.
-# Prefer gnustat when present; otherwise wrap the system stat so the 0%#a
-# probe still yields an octal mode that bash arithmetic can parse.
+# A PATH prefix is not enough: wg-quick prepends /usr/bin to PATH. Bind-mount
+# the already-installed GNU tools over /usr/bin for this ephemeral CI job.
 setup_gnu_coreutils_path() {
-	gnu_bin=$fixture/gnu-bin
-	mkdir -p "$gnu_bin"
-	if command -v gnustat >/dev/null 2>&1; then
-		ln -sf "$(command -v gnustat)" "$gnu_bin/stat"
-	else
-		real_stat=$(command -v stat)
-		cat > "$gnu_bin/stat" <<STUB
-#!/bin/sh
-if [ "\$1" = -c ] && [ "\$2" = '0%#a' ]; then
-	shift 2
-	printf '0%s\n' "\$("$real_stat" -c '%a' "\$@")"
-	exit \$?
-fi
-exec "$real_stat" "\$@"
-STUB
-		chmod 755 "$gnu_bin/stat"
-	fi
-	if command -v gnureadlink >/dev/null 2>&1; then
-		ln -sf "$(command -v gnureadlink)" "$gnu_bin/readlink"
-	fi
-	manager_path="$gnu_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	echo "network-namespace stat helper: $(ls -l "$gnu_bin/stat") (gnustat=$(command -v gnustat || true))" >&2
+	for tool in stat readlink; do
+		gnu=$(command -v "gnu$tool" || true)
+		target=/usr/bin/$tool
+		if [ -n "$gnu" ] && [ -x "$gnu" ] && [ -e "$target" ]; then
+			mount --bind "$gnu" "$target"
+			echo "network-namespace bound $gnu over $target" >&2
+		fi
+	done
+	manager_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 }
 
 preflight_wg_quick_strip() {
