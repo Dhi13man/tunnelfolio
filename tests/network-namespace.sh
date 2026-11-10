@@ -45,7 +45,19 @@ cleanup() {
 		for log in "$fixture/server.log" "$fixture/openvpn-server.log"; do
 			if [ -f "$log" ]; then
 				echo "--- ${log##*/} (tail)" >&2
-				tail -n 40 "$log" >&2
+				tail -n 80 "$log" >&2
+			fi
+		done
+		echo "--- ip link ---" >&2
+		ip netns exec "$namespace" ip -d link show >&2 || true
+		echo "--- openvpn processes ---" >&2
+		ps -ww -eo pid,args | grep -F openvpn | grep -v grep >&2 || true
+		echo "--- fixture json ---" >&2
+		for json in "$fixture"/status-*.json "$fixture"/connect-*.json "$fixture"/switch-*.json; do
+			if [ -f "$json" ]; then
+				echo "== ${json##*/} ==" >&2
+				cat "$json" >&2
+				echo >&2
 			fi
 		done
 	fi

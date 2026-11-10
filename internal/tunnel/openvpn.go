@@ -584,7 +584,7 @@ func openVPNBinarySupportsDisableDCO(path string) bool {
 	}
 	defer file.Close()
 	const (
-		needle = "--disable-dco"
+		needle = "disable-dco"
 		limit  = 16 << 20
 	)
 	buf := make([]byte, 256<<10)
