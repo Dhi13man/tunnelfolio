@@ -214,12 +214,41 @@ preflight_wg_quick_strip() {
 	sample=$fixture/wg-quick-strip.conf
 	cp "$fixture/wgtest.conf" "$sample"
 	chmod 600 "$sample"
+	echo "--- wg-quick lines 1-55 ---" >&2
+	sed -n '1,55p' /usr/bin/wg-quick >&2 || true
+	echo "--- ids and paths ---" >&2
+	id -a >&2
+	ip netns exec "$namespace" id -a >&2 || true
+	ls -ld /run "$fixture" "$sample" >&2
+	ip netns exec "$namespace" ls -ld /run "$fixture" "$sample" >&2 || true
+	echo "--- stat 0%#a host/netns ---" >&2
+	stat -c 'file=0%#a dir=0%#a' "$sample" "${sample%/*}" >&2 || true
+	ip netns exec "$namespace" env PATH="$manager_path" stat -c 'file=0%#a dir=0%#a' "$sample" "${sample%/*}" >&2 || true
+	echo "--- cat file in netns ---" >&2
+	ip netns exec "$namespace" cat "$sample" >&2 || echo "netns cat failed: $?" >&2
+	echo "--- host wg-quick strip ---" >&2
+	if PATH="$manager_path" wg-quick strip "$sample" >"$fixture/wg-quick-strip.host.out" 2>"$fixture/wg-quick-strip.host.err"; then
+		echo "host strip ok" >&2
+	else
+		echo "host strip failed:" >&2
+		cat "$fixture/wg-quick-strip.host.err" >&2
+	fi
+	echo "--- netns wg-quick strip ---" >&2
 	if ! ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$sample" \
 		>"$fixture/wg-quick-strip.out" 2>"$fixture/wg-quick-strip.err"; then
 		echo "wg-quick strip preflight failed:" >&2
 		cat "$fixture/wg-quick-strip.err" >&2
-		echo "stat -c '0%#a' via PATH=$manager_path:" >&2
-		ip netns exec "$namespace" env PATH="$manager_path" stat -c '0%#a' "$sample" >&2 || true
+		tmp_sample=/tmp/tunnelfolio-wg-quick-strip.conf
+		cp "$sample" "$tmp_sample"
+		chmod 600 "$tmp_sample"
+		echo "--- netns strip from /tmp ---" >&2
+		ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$tmp_sample" >&2 || true
+		chmod 755 "$fixture"
+		chmod 644 "$sample"
+		echo "--- netns strip after 0755/0644 ---" >&2
+		ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$sample" >&2 || true
+		chmod 700 "$fixture"
+		chmod 600 "$sample"
 		return 1
 	fi
 }
