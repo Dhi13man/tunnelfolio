@@ -1,6 +1,19 @@
 #!/bin/sh
 set -eu
 
+# Ubuntu 26 ships /bin/sleep as a uutils multicall binary that dispatches on
+# argv[0]. Copying it to "openvpn" makes it exit immediately with
+# "coreutils: unknown program 'openvpn'".
+install_sleep_stub() {
+	dest=$1
+	cat > "$dest" <<'STUB'
+#!/bin/sh
+exec /bin/sleep "$@"
+STUB
+	chmod 755 "$dest"
+}
+
+
 test_root=$(mktemp -d)
 cleanup() {
 	find "$test_root" -depth -delete
@@ -429,7 +442,7 @@ fresh_openvpn_state=$fresh_openvpn/var/lib/tunnelfolio
 fresh_openvpn_cutover=$fresh_openvpn/var/lib/tunnelfolio-cutover
 mkdir -p "$fresh_openvpn_cutover"
 chmod 700 "$fresh_openvpn_cutover"
-cp /bin/sleep "$fresh_bin/openvpn"
+install_sleep_stub "$fresh_bin/openvpn"
 "$fresh_bin/openvpn" 30 &
 fresh_openvpn_pid=$!
 : > "$fresh_openvpn/systemctl.log"
@@ -581,7 +594,7 @@ if SYSTEMCTL_LOG=$live/systemctl.log PATH="$fake_bin:$PATH" STATEDIR=$live/var/l
 fi
 rm "$live/var/lib/tunnelfolio/library/wireguard/unsafe"
 
-cp /bin/sleep "$fake_bin/openvpn"
+install_sleep_stub "$fake_bin/openvpn"
 "$fake_bin/openvpn" 30 &
 openvpn_pid=$!
 SYSTEMCTL_LOG=$live/systemctl.log PATH="$fake_bin:$PATH" STATEDIR=$live/var/lib/tunnelfolio CUTOVER_ROOT=$cutover \

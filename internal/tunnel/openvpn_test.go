@@ -423,3 +423,20 @@ func waitForTest(t *testing.T, timeout time.Duration, condition func() bool) {
 }
 
 var _ = syscall.SIGINT
+
+func TestOpenVPNBinarySupportsDisableDCO(t *testing.T) {
+	directory := privateTestDir(t)
+	positive := filepath.Join(directory, "with-flag")
+	negative := filepath.Join(directory, "without-flag")
+	writePrivateTestFile(t, positive, "#!/bin/sh\n# --disable-dco is recognized\n")
+	writePrivateTestFile(t, negative, "#!/bin/sh\necho openvpn stub\n")
+	if !openVPNBinarySupportsDisableDCO(positive) {
+		t.Fatal("expected to detect --disable-dco in the file")
+	}
+	if openVPNBinarySupportsDisableDCO(negative) {
+		t.Fatal("did not expect to detect --disable-dco in the stub")
+	}
+	if openVPNBinarySupportsDisableDCO(filepath.Join(directory, "missing")) {
+		t.Fatal("missing binary should not report support")
+	}
+}

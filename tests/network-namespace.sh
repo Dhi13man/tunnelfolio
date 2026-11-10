@@ -24,13 +24,40 @@ netns_config=/etc/netns/$namespace
 manager_pid=
 openvpn_server_pid=
 wireguard_object=
+wireguard_identifier=
+wireguard_second_identifier=
+broken_object=
+broken_identifier=
+
+wireguard_quick_path() {
+	ident=$1
+	library=$2
+	if [ -n "$ident" ] && [ -f "/etc/wireguard/$ident.conf" ]; then
+		printf '%s\n' "/etc/wireguard/$ident.conf"
+	else
+		printf '%s\n' "$library"
+	fi
+}
+
 cleanup() {
 	status=$?
 	if [ "$status" -ne 0 ]; then
 		for log in "$fixture/server.log" "$fixture/openvpn-server.log"; do
 			if [ -f "$log" ]; then
 				echo "--- ${log##*/} (tail)" >&2
-				tail -n 40 "$log" >&2
+				tail -n 80 "$log" >&2
+			fi
+		done
+		echo "--- ip link ---" >&2
+		ip netns exec "$namespace" ip -d link show >&2 || true
+		echo "--- openvpn processes ---" >&2
+		ps -ww -eo pid,args | grep -F openvpn | grep -v grep >&2 || true
+		echo "--- fixture json ---" >&2
+		for json in "$fixture"/status-*.json "$fixture"/connect-*.json "$fixture"/switch-*.json; do
+			if [ -f "$json" ]; then
+				echo "== ${json##*/} ==" >&2
+				cat "$json" >&2
+				echo >&2
 			fi
 		done
 	fi
@@ -43,8 +70,15 @@ cleanup() {
 		wait "$openvpn_server_pid" 2>/dev/null || true
 	fi
 	if [ -n "$wireguard_object" ]; then
-		ip netns exec "$namespace" wg-quick down "$wireguard_object" >/dev/null 2>&1 || true
+		ip netns exec "$namespace" wg-quick down "$(wireguard_quick_path "$wireguard_identifier" "$wireguard_object")" >/dev/null 2>&1 || true
 	fi
+	if [ -n "$broken_object" ]; then
+		ip netns exec "$namespace" wg-quick down "$(wireguard_quick_path "$broken_identifier" "$broken_object")" >/dev/null 2>&1 || true
+	fi
+	rm -f /etc/wireguard/tfstrip.conf
+	[ -z "$wireguard_identifier" ] || rm -f "/etc/wireguard/$wireguard_identifier.conf"
+	[ -z "$wireguard_second_identifier" ] || rm -f "/etc/wireguard/$wireguard_second_identifier.conf"
+	[ -z "$broken_identifier" ] || rm -f "/etc/wireguard/$broken_identifier.conf"
 	ip netns delete "$namespace" 2>/dev/null || true
 	[ ! -e "$fixture" ] || find "$fixture" -depth -delete
 	[ ! -e "$binary" ] || find "$binary" -delete
@@ -137,6 +171,7 @@ done
 sed 's/^dev tunclient$/dev tunsecond/' "$fixture/null.ovpn" > "$fixture/second.ovpn"
 cat > "$fixture/openvpn-server.conf" <<EOF
 dev tunserver
+disable-dco
 proto udp
 local 127.0.0.1
 port 11940
@@ -192,8 +227,79 @@ request_form() {
 	ip netns exec "$namespace" curl "$@" "http://127.0.0.1:50001$path"
 }
 
+# wg-quick strip (used during WireGuard inspect) runs `stat -c '0%#a'`.
+# Ubuntu 26's default uutils stat can reject or misformat that conversion.
+# A PATH prefix is not enough: wg-quick prepends /usr/bin to PATH. Bind-mount
+# the already-installed GNU tools over /usr/bin for this ephemeral CI job.
+setup_gnu_coreutils_path() {
+	for tool in stat readlink; do
+		gnu=$(command -v "gnu$tool" || true)
+		target=/usr/bin/$tool
+		if [ -n "$gnu" ] && [ -x "$gnu" ] && [ -e "$target" ]; then
+			mount --bind "$gnu" "$target"
+			echo "network-namespace bound $gnu over $target" >&2
+		fi
+	done
+	manager_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+preflight_wg_quick_strip() {
+	sample=$fixture/wg-quick-strip.conf
+	cp "$fixture/wgtest.conf" "$sample"
+	chmod 600 "$sample"
+	mkdir -p /etc/wireguard
+	chmod 700 /etc/wireguard
+	cp "$sample" /etc/wireguard/tfstrip.conf
+	chmod 600 /etc/wireguard/tfstrip.conf
+	if PATH="$manager_path" wg-quick strip /etc/wireguard/tfstrip.conf \
+		>"$fixture/wg-quick-strip.out" 2>"$fixture/wg-quick-strip.err"; then
+		rm -f /etc/wireguard/tfstrip.conf
+		echo "wg-quick strip preflight ok via /etc/wireguard/tfstrip.conf" >&2
+		return 0
+	fi
+	echo "wg-quick strip via /etc/wireguard failed:" >&2
+	cat "$fixture/wg-quick-strip.err" >&2
+	echo "--- wg-quick lines 1-55 ---" >&2
+	sed -n '1,55p' /usr/bin/wg-quick >&2 || true
+	echo "--- ids and paths ---" >&2
+	id -a >&2
+	ip netns exec "$namespace" id -a >&2 || true
+	ls -ld /run "$fixture" "$sample" >&2
+	ip netns exec "$namespace" ls -ld /run "$fixture" "$sample" >&2 || true
+	echo "--- stat 0%#a host/netns ---" >&2
+	stat -c 'file=0%#a dir=0%#a' "$sample" "${sample%/*}" >&2 || true
+	ip netns exec "$namespace" env PATH="$manager_path" stat -c 'file=0%#a dir=0%#a' "$sample" "${sample%/*}" >&2 || true
+	echo "--- cat file in netns ---" >&2
+	ip netns exec "$namespace" cat "$sample" >&2 || echo "netns cat failed: $?" >&2
+	echo "--- host wg-quick strip ---" >&2
+	if PATH="$manager_path" wg-quick strip "$sample" >"$fixture/wg-quick-strip.host.out" 2>"$fixture/wg-quick-strip.host.err"; then
+		echo "host strip ok" >&2
+	else
+		echo "host strip failed:" >&2
+		cat "$fixture/wg-quick-strip.host.err" >&2
+	fi
+	echo "--- netns wg-quick strip ---" >&2
+	if ! ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$sample" \
+		>"$fixture/wg-quick-strip.out" 2>"$fixture/wg-quick-strip.err"; then
+		echo "wg-quick strip preflight failed:" >&2
+		cat "$fixture/wg-quick-strip.err" >&2
+		tmp_sample=/tmp/tunnelfolio-wg-quick-strip.conf
+		cp "$sample" "$tmp_sample"
+		chmod 600 "$tmp_sample"
+		echo "--- netns strip from /tmp ---" >&2
+		ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$tmp_sample" >&2 || true
+		chmod 755 "$fixture"
+		chmod 644 "$sample"
+		echo "--- netns strip after 0755/0644 ---" >&2
+		ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$sample" >&2 || true
+		chmod 700 "$fixture"
+		chmod 600 "$sample"
+		return 1
+	fi
+}
+
 start_manager() {
-	ip netns exec "$namespace" env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	ip netns exec "$namespace" env PATH="$manager_path" \
 		"$binary" \
 		--listen 127.0.0.1:50001 \
 		--state-dir "$fixture/state" \
@@ -223,7 +329,11 @@ import_profile() {
 	filename=$2
 	result_path=$3
 	request_form /api/imports/inspect -F "files=@$profile_path;filename=$filename" > "$fixture/inspect.json"
-	jq -e '.commit_ready == true and (.inspection_records | length == 1)' "$fixture/inspect.json" >/dev/null
+	if ! jq -e '.commit_ready == true and (.inspection_records | length == 1)' "$fixture/inspect.json" >/dev/null; then
+		echo "profile inspection was not commit-ready for $filename:" >&2
+		cat "$fixture/inspect.json" >&2
+		return 1
+	fi
 	records=$(jq -c '.inspection_records' "$fixture/inspect.json")
 	receipt=$(jq -r '.receipt' "$fixture/inspect.json")
 	revision=$(jq -r '.library_revision' "$fixture/inspect.json")
@@ -258,7 +368,7 @@ wait_for_lifecycle() {
 }
 
 openvpn_client_pids() {
-	pgrep -f "^.*openvpn --config $fixture/state/library/\\.executions/exec-[^/]*/profile\\.ovpn --verb 3 --suppress-timestamps$" || true
+	pgrep -f "^.*openvpn --config $fixture/state/library/\\.executions/exec-[^/]*/profile\\.ovpn --verb 3 --suppress-timestamps( --disable-dco)?$" || true
 }
 
 wait_for_openvpn_absence() {
@@ -276,6 +386,8 @@ wait_for_openvpn_absence() {
 	return 1
 }
 
+setup_gnu_coreutils_path
+preflight_wg_quick_strip
 start_manager
 grep -F '"live":true' "$fixture/health.json"
 import_profile "$fixture/wgtest.conf" wgtest.conf "$fixture/import-wg.json"
@@ -397,7 +509,7 @@ request POST /api/connect "{\"profile\":\"$broken_id\"}" > "$fixture/connect-bro
 ip netns exec "$namespace" ip link show "$broken_identifier" >/dev/null
 crash_manager
 ip netns exec "$namespace" ip link show "$broken_identifier" >/dev/null
-ip netns exec "$namespace" wg-quick down "$broken_object" > "$fixture/down-broken.log" 2>&1
+ip netns exec "$namespace" wg-quick down "$(wireguard_quick_path "$broken_identifier" "$broken_object")" > "$fixture/down-broken.log" 2>&1
 if ip netns exec "$namespace" ip link show "$broken_identifier" >/dev/null 2>&1; then
 	echo "WireGuard interface survived the no-active restore setup" >&2
 	exit 1

@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -8,9 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Dhi13man/tunnelfolio/internal/securefs"
 )
 
 type WireGuardBackend struct {
@@ -90,7 +95,8 @@ func (b *WireGuardBackend) Start(ctx context.Context, profile Profile) error {
 	if present {
 		return fmt.Errorf("%w: WireGuard runtime name is already present", ErrIdentityConflict)
 	}
-	if _, err := b.runner.Run(ctx, "wg-quick", "up", profile.Path); err != nil {
+	quickPath := wgQuickConfigPath(profile)
+	if _, err := b.runner.Run(ctx, "wg-quick", "up", quickPath); err != nil {
 		return b.cleanupFailedStart(profile, fmt.Errorf("start WireGuard profile %s: %w", profile.ID, err))
 	}
 	if err := b.waitForProfile(ctx, profile, true); err != nil {
@@ -108,6 +114,7 @@ func (b *WireGuardBackend) cleanupFailedStart(profile Profile, cause error) erro
 	defer cancel()
 	present, observeErr := b.interfacePresent(ctx, profile.Identifier)
 	if observeErr == nil && !present {
+		removeStagedWireGuardConfig(profile)
 		return cause
 	}
 	if observeErr != nil {
@@ -117,13 +124,14 @@ func (b *WireGuardBackend) cleanupFailedStart(profile Profile, cause error) erro
 	if identityErr != nil || !matches {
 		return errors.Join(cause, ErrCleanupUnproved, fmt.Errorf("cleanup identity was not proved: %w", errors.Join(ErrIdentityConflict, identityErr)))
 	}
-	_, downErr := b.runner.Run(ctx, "wg-quick", "down", profile.Path)
+	_, downErr := b.runner.Run(ctx, "wg-quick", "down", wgQuickConfigPath(profile))
 	if downErr == nil {
 		downErr = b.waitForProfile(ctx, profile, false)
 	}
 	if downErr != nil {
 		return errors.Join(cause, ErrCleanupUnproved, fmt.Errorf("cleanup failed: %w", downErr))
 	}
+	removeStagedWireGuardConfig(profile)
 	return cause
 }
 
@@ -148,12 +156,13 @@ func (b *WireGuardBackend) Stop(ctx context.Context, profile Profile) error {
 	if !matches {
 		return fmt.Errorf("%w: refusing to stop key-mismatched WireGuard interface", ErrIdentityConflict)
 	}
-	if _, err := b.runner.Run(ctx, "wg-quick", "down", profile.Path); err != nil {
+	if _, err := b.runner.Run(ctx, "wg-quick", "down", wgQuickConfigPath(profile)); err != nil {
 		return fmt.Errorf("stop WireGuard profile %s: %w", profile.ID, err)
 	}
 	if err := b.waitForProfile(ctx, profile, false); err != nil {
 		return fmt.Errorf("prove WireGuard profile %s stopped: %w", profile.ID, err)
 	}
+	removeStagedWireGuardConfig(profile)
 	return nil
 }
 
@@ -274,4 +283,56 @@ func parseWireGuardDump(output []byte) (ProtocolStatus, error) {
 		})
 	}
 	return status, nil
+}
+
+// wgQuickConfigPath returns a config path wg-quick can read. Ubuntu 26's
+// AppArmor profile for wg-quick can deny opening configs outside
+// /etc/wireguard, including Tunnelfolio's library paths. When the system
+// directory can be prepared, stage a copy named after the runtime identifier
+// (tf + 12 characters) so the interface name stays the same. Fall back to the
+// library path when staging is not possible.
+func wgQuickConfigPath(profile Profile) string {
+	staged, err := stageWireGuardQuickConfig(profile)
+	if err != nil || staged == "" {
+		return profile.Path
+	}
+	return staged
+}
+
+func stagedWireGuardPath(profile Profile) string {
+	return filepath.Join(systemWireGuardDir, profile.Identifier+".conf")
+}
+
+func stageWireGuardQuickConfig(profile Profile) (string, error) {
+	if profile.Identifier == "" || profile.Path == "" {
+		return "", errors.New("wireguard profile is missing a runtime path")
+	}
+	if err := securefs.EnsurePrivateDir(systemWireGuardDir, os.Geteuid()); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(profile.Path)
+	if err != nil {
+		return "", err
+	}
+	dest := stagedWireGuardPath(profile)
+	if existing, err := os.ReadFile(dest); err == nil {
+		if bytes.Equal(existing, data) {
+			return dest, nil
+		}
+		return "", fmt.Errorf("refusing to overwrite %s", dest)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.WriteFile(dest, data, 0o600); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+func removeStagedWireGuardConfig(profile Profile) {
+	dest := stagedWireGuardPath(profile)
+	if dest == profile.Path {
+		return
+	}
+	_ = os.Remove(dest)
 }
