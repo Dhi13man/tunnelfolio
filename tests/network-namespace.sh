@@ -214,6 +214,18 @@ preflight_wg_quick_strip() {
 	sample=$fixture/wg-quick-strip.conf
 	cp "$fixture/wgtest.conf" "$sample"
 	chmod 600 "$sample"
+	mkdir -p /etc/wireguard
+	chmod 700 /etc/wireguard
+	cp "$sample" /etc/wireguard/tfstrip.conf
+	chmod 600 /etc/wireguard/tfstrip.conf
+	if PATH="$manager_path" wg-quick strip /etc/wireguard/tfstrip.conf \
+		>"$fixture/wg-quick-strip.out" 2>"$fixture/wg-quick-strip.err"; then
+		rm -f /etc/wireguard/tfstrip.conf
+		echo "wg-quick strip preflight ok via /etc/wireguard/tfstrip.conf" >&2
+		return 0
+	fi
+	echo "wg-quick strip via /etc/wireguard failed:" >&2
+	cat "$fixture/wg-quick-strip.err" >&2
 	echo "--- wg-quick lines 1-55 ---" >&2
 	sed -n '1,55p' /usr/bin/wg-quick >&2 || true
 	echo "--- ids and paths ---" >&2
