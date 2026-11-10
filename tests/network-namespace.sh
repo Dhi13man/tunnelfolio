@@ -195,17 +195,46 @@ request_form() {
 }
 
 # wg-quick strip (used during WireGuard inspect) runs `stat -c '0%#a'`.
-# Ubuntu 26's default uutils stat can reject or misformat that conversion,
-# so prefer the GNU binaries that remain installed as gnustat/gnureadlink.
+# Ubuntu 26's default uutils stat can reject or misformat that conversion.
+# Prefer gnustat when present; otherwise wrap the system stat so the 0%#a
+# probe still yields an octal mode that bash arithmetic can parse.
 setup_gnu_coreutils_path() {
 	gnu_bin=$fixture/gnu-bin
 	mkdir -p "$gnu_bin"
-	for tool in stat readlink; do
-		if command -v "gnu$tool" >/dev/null 2>&1; then
-			ln -sf "$(command -v "gnu$tool")" "$gnu_bin/$tool"
-		fi
-	done
+	if command -v gnustat >/dev/null 2>&1; then
+		ln -sf "$(command -v gnustat)" "$gnu_bin/stat"
+	else
+		real_stat=$(command -v stat)
+		cat > "$gnu_bin/stat" <<STUB
+#!/bin/sh
+if [ "\$1" = -c ] && [ "\$2" = '0%#a' ]; then
+	shift 2
+	printf '0%s\n' "\$("$real_stat" -c '%a' "\$@")"
+	exit \$?
+fi
+exec "$real_stat" "\$@"
+STUB
+		chmod 755 "$gnu_bin/stat"
+	fi
+	if command -v gnureadlink >/dev/null 2>&1; then
+		ln -sf "$(command -v gnureadlink)" "$gnu_bin/readlink"
+	fi
 	manager_path="$gnu_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	echo "network-namespace stat helper: $(ls -l "$gnu_bin/stat") (gnustat=$(command -v gnustat || true))" >&2
+}
+
+preflight_wg_quick_strip() {
+	sample=$fixture/wg-quick-strip.conf
+	cp "$fixture/wgtest.conf" "$sample"
+	chmod 600 "$sample"
+	if ! ip netns exec "$namespace" env PATH="$manager_path" wg-quick strip "$sample" \
+		>"$fixture/wg-quick-strip.out" 2>"$fixture/wg-quick-strip.err"; then
+		echo "wg-quick strip preflight failed:" >&2
+		cat "$fixture/wg-quick-strip.err" >&2
+		echo "stat -c '0%#a' via PATH=$manager_path:" >&2
+		ip netns exec "$namespace" env PATH="$manager_path" stat -c '0%#a' "$sample" >&2 || true
+		return 1
+	fi
 }
 
 start_manager() {
@@ -297,6 +326,7 @@ wait_for_openvpn_absence() {
 }
 
 setup_gnu_coreutils_path
+preflight_wg_quick_strip
 start_manager
 grep -F '"live":true' "$fixture/health.json"
 import_profile "$fixture/wgtest.conf" wgtest.conf "$fixture/import-wg.json"
