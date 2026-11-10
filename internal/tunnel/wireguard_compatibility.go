@@ -13,7 +13,7 @@ import (
 	"github.com/Dhi13man/tunnelfolio/internal/securefs"
 )
 
-const systemWireGuardDir = "/etc/wireguard"
+var systemWireGuardDir = "/etc/wireguard"
 
 type WireGuardCompatibilityChecker struct {
 	Runner     CommandRunner

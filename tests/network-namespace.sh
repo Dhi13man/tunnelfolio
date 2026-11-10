@@ -24,6 +24,21 @@ netns_config=/etc/netns/$namespace
 manager_pid=
 openvpn_server_pid=
 wireguard_object=
+wireguard_identifier=
+wireguard_second_identifier=
+broken_object=
+broken_identifier=
+
+wireguard_quick_path() {
+	ident=$1
+	library=$2
+	if [ -n "$ident" ] && [ -f "/etc/wireguard/$ident.conf" ]; then
+		printf '%s\n' "/etc/wireguard/$ident.conf"
+	else
+		printf '%s\n' "$library"
+	fi
+}
+
 cleanup() {
 	status=$?
 	if [ "$status" -ne 0 ]; then
@@ -43,8 +58,15 @@ cleanup() {
 		wait "$openvpn_server_pid" 2>/dev/null || true
 	fi
 	if [ -n "$wireguard_object" ]; then
-		ip netns exec "$namespace" wg-quick down "$wireguard_object" >/dev/null 2>&1 || true
+		ip netns exec "$namespace" wg-quick down "$(wireguard_quick_path "$wireguard_identifier" "$wireguard_object")" >/dev/null 2>&1 || true
 	fi
+	if [ -n "$broken_object" ]; then
+		ip netns exec "$namespace" wg-quick down "$(wireguard_quick_path "$broken_identifier" "$broken_object")" >/dev/null 2>&1 || true
+	fi
+	rm -f /etc/wireguard/tfstrip.conf
+	[ -z "$wireguard_identifier" ] || rm -f "/etc/wireguard/$wireguard_identifier.conf"
+	[ -z "$wireguard_second_identifier" ] || rm -f "/etc/wireguard/$wireguard_second_identifier.conf"
+	[ -z "$broken_identifier" ] || rm -f "/etc/wireguard/$broken_identifier.conf"
 	ip netns delete "$namespace" 2>/dev/null || true
 	[ ! -e "$fixture" ] || find "$fixture" -depth -delete
 	[ ! -e "$binary" ] || find "$binary" -delete
@@ -475,7 +497,7 @@ request POST /api/connect "{\"profile\":\"$broken_id\"}" > "$fixture/connect-bro
 ip netns exec "$namespace" ip link show "$broken_identifier" >/dev/null
 crash_manager
 ip netns exec "$namespace" ip link show "$broken_identifier" >/dev/null
-ip netns exec "$namespace" wg-quick down "$broken_object" > "$fixture/down-broken.log" 2>&1
+ip netns exec "$namespace" wg-quick down "$(wireguard_quick_path "$broken_identifier" "$broken_object")" > "$fixture/down-broken.log" 2>&1
 if ip netns exec "$namespace" ip link show "$broken_identifier" >/dev/null 2>&1; then
 	echo "WireGuard interface survived the no-active restore setup" >&2
 	exit 1

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,4 +181,17 @@ func TestWireGuardWaitHonorsCancellation(t *testing.T) {
 	if err := backend.waitForProfile(ctx, profile, true); !errors.Is(err, context.Canceled) {
 		t.Fatalf("wait returned %v", err)
 	}
+}
+
+func TestWgQuickConfigPathFallsBackWhenSystemDirIsUnavailable(t *testing.T) {
+	original := systemWireGuardDir
+	systemWireGuardDir = filepath.Join(t.TempDir(), "wireguard")
+	t.Cleanup(func() { systemWireGuardDir = original })
+
+	profile := testWireGuardRuntimeProfile(1)
+	if got := wgQuickConfigPath(profile); got != profile.Path {
+		t.Fatalf("wgQuickConfigPath() = %q, want library path %q", got, profile.Path)
+	}
+	// Must never delete the library object if staging did not happen.
+	removeStagedWireGuardConfig(profile)
 }
