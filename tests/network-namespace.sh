@@ -334,7 +334,7 @@ wait_for_lifecycle() {
 }
 
 openvpn_client_pids() {
-	pgrep -f "^.*openvpn --config $fixture/state/library/\\.executions/exec-[^/]*/profile\\.ovpn --verb 3 --suppress-timestamps\\( --disable-dco\\)\?$" || true
+	pgrep -f "^.*openvpn --config $fixture/state/library/\\.executions/exec-[^/]*/profile\\.ovpn --verb 3 --suppress-timestamps\\( --disable-dco\\)\\?$" || true
 }
 
 wait_for_openvpn_absence() {
