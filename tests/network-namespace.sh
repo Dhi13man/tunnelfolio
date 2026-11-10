@@ -121,6 +121,7 @@ done
 	printf '%s\n' \
 		'client' \
 		'dev tunclient' \
+		'disable-dco' \
 		'proto udp' \
 		'remote 127.0.0.1 11940' \
 		'nobind' \
@@ -137,6 +138,7 @@ done
 sed 's/^dev tunclient$/dev tunsecond/' "$fixture/null.ovpn" > "$fixture/second.ovpn"
 cat > "$fixture/openvpn-server.conf" <<EOF
 dev tunserver
+disable-dco
 proto udp
 local 127.0.0.1
 port 11940
@@ -192,8 +194,22 @@ request_form() {
 	ip netns exec "$namespace" curl "$@" "http://127.0.0.1:50001$path"
 }
 
+# wg-quick strip (used during WireGuard inspect) runs `stat -c '0%#a'`.
+# Ubuntu 26's default uutils stat can reject or misformat that conversion,
+# so prefer the GNU binaries that remain installed as gnustat/gnureadlink.
+setup_gnu_coreutils_path() {
+	gnu_bin=$fixture/gnu-bin
+	mkdir -p "$gnu_bin"
+	for tool in stat readlink; do
+		if command -v "gnu$tool" >/dev/null 2>&1; then
+			ln -sf "$(command -v "gnu$tool")" "$gnu_bin/$tool"
+		fi
+	done
+	manager_path="$gnu_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
 start_manager() {
-	ip netns exec "$namespace" env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+	ip netns exec "$namespace" env PATH="$manager_path" \
 		"$binary" \
 		--listen 127.0.0.1:50001 \
 		--state-dir "$fixture/state" \
@@ -223,7 +239,11 @@ import_profile() {
 	filename=$2
 	result_path=$3
 	request_form /api/imports/inspect -F "files=@$profile_path;filename=$filename" > "$fixture/inspect.json"
-	jq -e '.commit_ready == true and (.inspection_records | length == 1)' "$fixture/inspect.json" >/dev/null
+	if ! jq -e '.commit_ready == true and (.inspection_records | length == 1)' "$fixture/inspect.json" >/dev/null; then
+		echo "profile inspection was not commit-ready for $filename:" >&2
+		cat "$fixture/inspect.json" >&2
+		return 1
+	fi
 	records=$(jq -c '.inspection_records' "$fixture/inspect.json")
 	receipt=$(jq -r '.receipt' "$fixture/inspect.json")
 	revision=$(jq -r '.library_revision' "$fixture/inspect.json")
@@ -276,6 +296,7 @@ wait_for_openvpn_absence() {
 	return 1
 }
 
+setup_gnu_coreutils_path
 start_manager
 grep -F '"live":true' "$fixture/health.json"
 import_profile "$fixture/wgtest.conf" wgtest.conf "$fixture/import-wg.json"

@@ -168,7 +168,7 @@ jobs:
           name: tunnelfolio-release-${{ needs.authorize.outputs.tag_object }}
           path: dist
       - name: Install cross-architecture runners
-        run: sudo apt-get update && sudo apt-get install --yes qemu-user-static
+        run: ./scripts/install-qemu-user.sh
       - name: Execute all release binaries
         env:
           RELEASE_COMMIT: ${{ needs.authorize.outputs.commit }}
