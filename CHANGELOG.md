@@ -21,7 +21,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- Bump `golang.org/x/sys` from 0.49.0 to 0.50.0 (#54). Go stays at 1.27.3.
+- Bump `golang.org/x/sys` from 0.49.0 to 0.50.0 (#54).
+
+### Security
+
+- Build with Go 1.27.4 to fix GO-2026-6859 (HTTP/1 server crash due to a
+  `MaxBytesReader` header race in `net/http`) (#60).
 
 ## [0.2.4] - 2026-10-23
 
