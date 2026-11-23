@@ -299,6 +299,48 @@ function createServer() {
   });
 }
 
+// Firefox 159 (Playwright 1.65 build v1572) crashes the content process when
+// one element's reflected `ariaLabelledByElements` is read from two JS worlds:
+// axe-core reads it in the page's main world and Playwright 1.65 reads it in
+// its utility world for aria snapshots and role/label locators. See
+// https://bugzilla.mozilla.org/show_bug.cgi?id=2090055 and
+// microsoft/playwright#43967 / #44135. Tunnelfolio only sets aria-labelledby
+// as an attribute, so in Firefox we give the main world an equivalent getter
+// that resolves the attribute's ID references instead of touching the native
+// per-element cache. Playwright's utility world still uses the native
+// property, and axe still sees the same referenced elements. Remove this once
+// Playwright ships a Firefox build with the Mozilla fix.
+function avoidFirefoxAriaReflectionCrash() {
+  const native = Object.getOwnPropertyDescriptor(Element.prototype, "ariaLabelledByElements");
+  if (!native || !native.configurable) return;
+  Object.defineProperty(Element.prototype, "ariaLabelledByElements", {
+    configurable: true,
+    enumerable: native.enumerable,
+    get() {
+      const value = this.getAttribute("aria-labelledby");
+      if (value === null) return null;
+      const root = this.getRootNode();
+      const elements = [];
+      for (const id of value.split(/[ \t\n\f\r]+/).filter(Boolean)) {
+        const element = typeof root.getElementById === "function"
+          ? root.getElementById(id)
+          : root.querySelector?.(`#${CSS.escape(id)}`);
+        if (element && !elements.includes(element)) elements.push(element);
+      }
+      return Object.freeze(elements);
+    },
+    set(elements) {
+      native.set.call(this, elements);
+    },
+  });
+}
+
+async function newBrowserContext(browser, options) {
+  const context = await browser.newContext(options);
+  if (browserName === "firefox") await context.addInitScript(avoidFirefoxAriaReflectionCrash);
+  return context;
+}
+
 async function scanAppearance(page, state, { fullPage = true } = {}) {
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
@@ -426,7 +468,7 @@ async function waitImportOutcome(page) {
   const browser = await browserType.launch(launchOptions);
   let page;
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+    const context = await newBrowserContext(browser, { viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
     page = await context.newPage();
     page.setDefaultTimeout(15000);
     page.setDefaultNavigationTimeout(15000);
@@ -1332,7 +1374,7 @@ async function waitImportOutcome(page) {
     await page.locator("#import-finish").click();
 
     if (browserName === "chromium") {
-      const touchContext = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: "reduce" });
+      const touchContext = await newBrowserContext(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: "reduce" });
       const touchPage = await touchContext.newPage();
       touchPage.setDefaultTimeout(15000);
       touchPage.setDefaultNavigationTimeout(15000);
