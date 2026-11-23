@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-23
+
+### Fixed
+
+- Keep tunnels working on Ubuntu 26 hosts (#57): WireGuard `wg-quick`
+  inspect/up/down now uses configs staged under `/etc/wireguard/tf*.conf`,
+  because Ubuntu 26 confines `wg-quick` so it cannot read configs from `/run`.
+- OpenVPN is launched with `--disable-dco` when the installed binary supports
+  it, so OpenVPN 2.7 keeps the classic TUN/TAP device the profile names (#57).
+- Keep CI and release builds working on Ubuntu 26 runners (QEMU user-mode
+  install, OpenVPN test stub, GNU `stat`/`readlink` in the namespace test)
+  (#57).
+
+### Changed
+
+- Bump `golang.org/x/sys` from 0.49.0 to 0.50.0 (#54).
+
+### Security
+
+- Build with Go 1.27.4 to fix GO-2026-6859 (HTTP/1 server crash due to a
+  `MaxBytesReader` header race in `net/http`) (#60).
+
 ## [0.2.4] - 2026-10-23
 
 ### Fixed
@@ -123,6 +145,7 @@ All notable changes to this project are documented here. The format is based on
   and `x/text` to v0.41.0 to clear pre-release security advisories.
 - Bump quic-go to v0.59.1 to address GO-2026-5676.
 
-[Unreleased]: https://github.com/Dhi13man/tunnelfolio/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Dhi13man/tunnelfolio/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/Dhi13man/tunnelfolio/releases/tag/v0.2.5
 [0.2.0]: https://github.com/Dhi13man/tunnelfolio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Dhi13man/tunnelfolio/releases/tag/v0.1.0
